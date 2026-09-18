@@ -1,0 +1,4 @@
+#!/bin/bash
+# Fake osascript: logs the arguments and the script fed on stdin; finds no window.
+{ echo "osascript $*"; [ -t 0 ] || sed 's/^/  | /'; } >> "${SHIM_LOG:-/dev/null}"
+exit 0

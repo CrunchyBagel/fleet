@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "claude $*" >> "${SHIM_LOG:-/dev/null}"
+exit 0

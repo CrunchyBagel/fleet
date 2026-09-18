@@ -1,0 +1,12 @@
+#!/bin/bash
+# Fake ssh for the test suite. Drops options, then runs the command for the
+# named host in a stripped environment via zsh -c, the way sshd does.
+# Special hosts: dead (connection refused), nofleet (fleet missing), slow (hangs).
+while [ $# -gt 0 ]; do case "$1" in -o|-i|-p) shift 2 ;; -*) shift ;; *) break ;; esac; done
+host="$1"; shift
+case "$host" in
+  dead)    exit 255 ;;
+  nofleet) exit 127 ;;
+  slow)    printf '[{"partial":1'; sleep 60; exit 0 ;;
+esac
+exec env -i HOME="$FLEET_TEST_RHOME" PATH=/usr/bin:/bin FAKE_TMUX_SESSIONS="${FAKE_TMUX_SESSIONS:-}" SHIM_LOG="${SHIM_LOG:-/dev/null}" /bin/zsh -c "$*"

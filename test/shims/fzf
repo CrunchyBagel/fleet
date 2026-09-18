@@ -1,0 +1,6 @@
+#!/bin/bash
+# Fake fzf: reads all input (as fzf does), then prints the first line matching
+# --query (a regex here, for precise picks in tests) or the first line.
+q=""; for a in "$@"; do case "$a" in --query=*) q="${a#--query=}" ;; esac; done
+all=$(cat)
+if [ -n "$q" ]; then printf '%s\n' "$all" | grep -E -- "$q" | head -1; else printf '%s\n' "$all" | head -1; fi

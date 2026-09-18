@@ -1,0 +1,97 @@
+# XcodeGen spec for the Fleet app. `xcodegen` regenerates Fleet.xcodeproj from
+# this; the generated project is committed too so Xcode opens it without any
+# tooling installed. Sources live in Fleet/.
+name: Fleet
+options:
+  bundleIdPrefix: com.crunchybagel
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  Citadel:                    # SSH client for the iOS app (SwiftNIO SSH underneath)
+    url: https://github.com/orlandos-nl/Citadel
+    from: 0.12.1
+targets:
+  Fleet:
+    type: application
+    platform: macOS
+    sources:
+      - path: Fleet
+        excludes: [AppIcon.icon]
+      - path: Shared
+      - path: Fleet/AppIcon.icon
+        type: file            # one Icon Composer document, compiled by actool; not a folder of sources
+    entitlements:
+      path: Fleet/Fleet.entitlements
+      properties:
+        # No App Sandbox: the app spawns ~/bin/fleet, which runs ssh, tmux and
+        # git. Sandboxing would break all of it. Hardened runtime stays on.
+        com.apple.security.app-sandbox: false
+    info:
+      path: Fleet/Info.plist
+      properties:
+        CFBundleName: Fleet
+        CFBundleDisplayName: Fleet
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        NSHighResolutionCapable: true
+        NSPrincipalClass: NSApplication
+        LSApplicationCategoryType: public.app-category.developer-tools
+        CFBundleIconName: AppIcon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.crunchybagel.fleet
+        PRODUCT_NAME: Fleet
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  FleetMobile:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: FleetMobile
+      - path: Shared
+      - path: Fleet/AppIcon.icon
+        type: file
+    dependencies:
+      - package: Citadel
+    info:
+      path: FleetMobile/Info.plist
+      properties:
+        CFBundleName: Fleet
+        CFBundleDisplayName: Fleet
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        LSApplicationQueriesSchemes: [claude]
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleIconName: AppIcon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.crunchybagel.fleet.mobile
+        PRODUCT_NAME: Fleet
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_STRICT_CONCURRENCY: minimal
+schemes:
+  FleetMobile:
+    build:
+      targets: { FleetMobile: all }
+    run:
+      config: Debug
+  Fleet:
+    build:
+      targets: { Fleet: all }
+    run:
+      config: Debug
+    archive:
+      config: Release

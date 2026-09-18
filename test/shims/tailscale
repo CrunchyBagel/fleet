@@ -1,0 +1,11 @@
+#!/bin/bash
+# Fake tailscale for the test suite. `status --json` names this machine
+# "laptop" with studio online and "asleep" offline. FAKE_TAILSCALE=hang never
+# answers, the way the real CLI blocks when the Tailscale app is restarting.
+echo "tailscale $*" >> "${SHIM_LOG:-/dev/null}"
+[ "${FAKE_TAILSCALE:-}" = hang ] && exec sleep 60
+case "$*" in
+  "status --self --json") printf '{"Self":{"DNSName":"laptop.tail.ts.net.","OS":"macOS","Online":true}}\n' ;;
+  "status --json") printf '{"Self":{"DNSName":"laptop.tail.ts.net.","OS":"macOS","Online":true,"TailscaleIPs":["100.64.0.1"]},"Peer":{"a":{"DNSName":"studio.tail.ts.net.","OS":"macOS","Online":true,"TailscaleIPs":["100.64.0.2"]},"b":{"DNSName":"asleep.tail.ts.net.","OS":"macOS","Online":false,"TailscaleIPs":["100.64.0.3"]}}}\n' ;;
+  *) exit 1 ;;
+esac

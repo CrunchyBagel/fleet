@@ -1,0 +1,2100 @@
+#!/usr/bin/env bash
+#
+# fleet - manage Claude Code agent worktrees across a fleet of Macs.
+#
+# Layout it assumes:
+#   $FLEET_ROOT/<project>/main      primary clone
+#   $FLEET_ROOT/<project>/<task>    worktree on branch agent/<task>
+#
+# Written for bash 3.2 (stock macOS). Requires: git, jq, fzf.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------- config
+
+# Directory holding the real script, following the ~/bin/fleet symlink.
+# macOS bash 3.2 has no `readlink -f`, so walk the links by hand.
+fleet_src() {
+  local s="$0" t
+  while t=$(readlink "$s" 2>/dev/null); do
+    case "$t" in /*) s="$t" ;; *) s="$(dirname "$s")/$t" ;; esac
+  done
+  cd "$(dirname "$s")" && pwd
+}
+
+FLEET_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/config"
+# shellcheck disable=SC1090
+[ -f "$FLEET_CONFIG" ] && . "$FLEET_CONFIG"
+
+: "${FLEET_ROOT:=$HOME/code}"
+: "${FLEET_STATE:=$HOME/.local/state/fleet}"
+: "${FLEET_BRANCH_PREFIX:=agent/}"
+: "${FLEET_SIM:=iPhone 17 Pro}"
+# What `fleet open` opens the checkout in: auto = Xcode when the checkout has a
+# workspace or project and Xcode is installed, else the folder in Finder;
+# xcode | finder; or a command (code, cursor, zed) or app name, given the dir.
+: "${FLEET_OPEN:=auto}"
+: "${FLEET_SSH_TIMEOUT:=3}"                        # ssh connect timeout, seconds
+: "${FLEET_CMD_TIMEOUT:=10}"                       # whole remote `fleet status`, seconds
+: "${FLEET_EXIT_TIMEOUT:=10}"                      # kill: how long the agent gets to /exit, seconds
+: "${FLEET_CHECKOUT:=$HOME/Developer/fleet}"       # where `install` clones the repo
+: "${FLEET_REPO:=CrunchyBagel/fleet}"                   # gh owner/name of this repo
+: "${FLEET_CLAUDE_ARGS:=--permission-mode auto --remote-control}"   # how `fleet new` starts claude
+# The host list: one ssh alias per line, # comments. Lives next to the config
+# on every machine, never in git; `fleet hosts add|rm` and `fleet update` push
+# it over ssh. FLEET_HOSTS in the config overrides it (rarely what you want).
+FLEET_HOSTS_FILE="$(dirname "$FLEET_CONFIG")/hosts"
+# Optional: ssh public keys (git allowed_signers format) that `fleet update`
+# accepts new code from. Absent = any commit origin serves is run. See SECURITY.md.
+FLEET_SIGNERS="$(dirname "$FLEET_CONFIG")/allowed_signers"
+: "${FLEET_HOSTS:=$(sed 's/#.*//' "$FLEET_HOSTS_FILE" 2>/dev/null | tr '\n' ' ' || true)}"
+# A host is only ever an ssh destination: letters, digits, dots, dashes,
+# underscores. Anything else (an option, a space, a shell character) is dropped
+# before it can reach `ssh "$h"`. `hosts add` refuses it; the loader skips it.
+valid_host() { case "$1" in ''|-*|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac; }
+hosts_valid() { local h out=""; for h in $1; do valid_host "$h" && out="$out $h"; done; printf '%s' "${out# }"; }
+FLEET_HOSTS=$(hosts_valid "$FLEET_HOSTS")
+# Tailscale, if present (GUI app bundle or Homebrew). The tailnet name is
+# what other machines ssh to via MagicDNS, so it is the natural FLEET_SELF.
+tailscale_bin() {
+  command -v tailscale 2>/dev/null && return 0
+  [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] \
+    && { echo /Applications/Tailscale.app/Contents/MacOS/Tailscale; return 0; }
+  return 1
+}
+# tailscale_status [--self]: `tailscale status --json`, or nothing. Cut off
+# after FLEET_SSH_TIMEOUT seconds: the CLI waits forever for the Tailscale
+# app while it restarts, and every fleet invocation, hooks and the Mac app's
+# polls included, goes through here. The wrapper /usr/local/bin/tailscale is
+# a shell script, so its child is killed as well.
+tailscale_status() {
+  local ts f pid wd rc; ts=$(tailscale_bin) || return 1
+  f=$(mktemp "${TMPDIR:-/tmp}/fleet-ts.XXXXXX") || return 1
+  "$ts" status "$@" --json >"$f" 2>/dev/null & pid=$!
+  ( sleep "$FLEET_SSH_TIMEOUT"; pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 & wd=$!
+  wait "$pid" 2>/dev/null; rc=$?
+  { kill "$wd" && wait "$wd"; } >/dev/null 2>&1 || true
+  [ "$rc" -eq 0 ] && cat "$f"; rm -f "$f"
+  [ "$rc" -eq 0 ]
+}
+tailscale_self() {   # this machine's tailnet name (first label of its MagicDNS name)
+  tailscale_status --self | jq -r '.Self.DNSName // "" | split(".")[0]' 2>/dev/null
+}
+tailscale_macs() {   # every macOS machine on the tailnet, self included, one per line
+  tailscale_status \
+    | jq -r '[.Self] + [.Peer[]?] | .[] | select(.OS=="macOS") | .DNSName | split(".")[0]' 2>/dev/null
+}
+: "${FLEET_SELF:=$(tailscale_self || true)}"
+: "${FLEET_SELF:=$(hostname -s | tr '[:upper:]' '[:lower:]')}"
+# Where fleet, tmux, claude, jq, fzf live. Kept with a literal $HOME so the
+# same string can be sent to a remote host, which expands its own $HOME.
+# Non-interactive ssh shells and Claude Code hooks do not read .zshrc/.zprofile,
+# so nothing here may rely on the login PATH.
+: "${FLEET_PATH:=\$HOME/bin:\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin}"
+FLEET_ORIG_PATH="$PATH"                            # the caller's PATH, before we add to it
+export PATH="${FLEET_PATH//\$HOME/$HOME}:$PATH"
+
+# Is ~/bin on the PATH the user's shell had, or at least set up to be next time?
+bin_on_path() {
+  case ":$FLEET_ORIG_PATH:" in *":$HOME/bin:"*) return 0 ;; esac
+  grep -q '^# fleet: put ~/bin on PATH' "$HOME/.zprofile" 2>/dev/null
+}
+
+# Prefix a command with the PATH prelude, for ssh and for terminals spawned by
+# `open`, neither of which inherit this process's PATH.
+# shellcheck disable=SC2016  # $PATH must reach the remote shell unexpanded
+with_path() { printf 'export PATH="%s:$PATH"; %s' "$FLEET_PATH" "$1"; }
+
+DIM=$'\033[2m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+GREEN=$'\033[32m'; YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RED=$'\033[31m'
+[ -t 1 ] || { DIM=; BOLD=; RESET=; GREEN=; YELLOW=; BLUE=; RED=; }
+
+die() { printf '%s\n' "fleet: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 not found on \$PATH"; }
+
+# ---------------------------------------------------------------- status (local)
+#
+# Emits a JSON array describing every worktree on THIS machine.
+# This is what remote hosts run when the client fans out.
+
+reltime() {
+  [ "$1" -gt 0 ] 2>/dev/null || { echo "no commits"; return 0; }
+  local d=$(( $(date +%s) - $1 ))
+  if   [ "$d" -lt 60 ]    ; then echo "${d}s ago"
+  elif [ "$d" -lt 3600 ]  ; then echo "$((d/60))m ago"
+  elif [ "$d" -lt 86400 ] ; then echo "$((d/3600))h ago"
+  else                           echo "$((d/86400))d ago"
+  fi
+}
+
+# tmux rewrites '.' and ':' in session names to '_'. Do the same up front so
+# the name we look up is the name tmux (and therefore `fleet hook`) uses.
+session_name() { printf '%s' "$1-$2" | tr '.:' '__'; }
+
+# Sessions fleet itself started: one file per tmux session name under
+# $FLEET_STATE/sessions, written by `fleet new`. `fleet ls` shows only these.
+# A session in a plain clone is forgotten once its tmux session is gone; a
+# worktree session lives until `fleet reap` removes the worktree.
+FLEET_SESSIONS="$FLEET_STATE/sessions"
+register_session() {   # $1 session $2 dir $3 project; file: dir on line 1, project on line 2
+  mkdir -p "$FLEET_SESSIONS"; printf '%s\n%s\n' "$2" "$3" > "$FLEET_SESSIONS/$1"
+}
+forget_session()   { rm -f "$FLEET_SESSIONS/$1" "$FLEET_STATE/$1.json"; }
+is_managed() {       # $1 session $2 in_worktree(true|false): registered, and still alive unless it has a worktree
+  [ -e "$FLEET_SESSIONS/$1" ] || return 1
+  if [ "$2" = false ] && ! tmux has-session -t "$1" 2>/dev/null; then forget_session "$1"; return 1; fi
+  return 0
+}
+# Sessions registered for a directory: the session names, one per line.
+sessions_in() {      # $1 dir
+  local f
+  for f in "$FLEET_SESSIONS"/*; do
+    [ -e "$f" ] && [ "$(sed -n 1p "$f")" = "$1" ] && basename "$f"
+  done 2>/dev/null
+  return 0
+}
+
+# Who has a tmux client attached to a session, as machine names, one per line:
+# tmux gives each client's pty, `who` says where that login came from (an IP
+# for ssh, nothing for a local terminal), and Tailscale maps the IP to a name.
+tailscale_name_for_ip() {
+  tailscale_status \
+    | jq -r --arg ip "$1" '[.Self] + [.Peer[]?] | .[] | select((.TailscaleIPs // []) | index($ip)) | .DNSName | split(".")[0]' 2>/dev/null | head -1
+}
+attached_from() {   # $1 session
+  local tty from ip name
+  tmux list-clients -t "$1" -F '#{client_tty}' 2>/dev/null | while read -r tty; do
+    tty=${tty#/dev/}
+    from=$(who 2>/dev/null | awk -v t="$tty" '$2 == t { print $NF }')
+    case "$from" in
+      \(*\)) ip=${from#\(}; ip=${ip%\)}; name=$(tailscale_name_for_ip "$ip"); printf '%s\n' "${name:-$ip}" ;;
+      *)     printf '%s\n' "$FLEET_SELF" ;;      # a terminal on this machine
+    esac
+  done | sort -u
+  return 0
+}
+
+# Claude Code's own session registry: ~/.claude/sessions/<pid>.json, one per
+# running session, with the tmux target it runs in, its local sessionId and,
+# for Remote Control sessions, bridgeSessionId (session_01...), which is what
+# claude.ai/code/<id> and the desktop app's claude://code/continue?session=
+# address. Prefer that; fall back to the local id; "" if the session is not
+# running or not in tmux.
+claude_session_id() {   # $1 tmux session name
+  jq -r --arg t "$1:" 'select((.tmux // "") | startswith($t)) | .bridgeSessionId // .sessionId // empty' \
+    "$HOME"/.claude/sessions/*.json 2>/dev/null | head -1
+  return 0
+}
+
+agent_state() {
+  # State is written by Claude Code hooks via `fleet hook <state>`.
+  # Falls back to tmux presence so it degrades gracefully, never guesses
+  # by scraping pane output.
+  local session="$1" f="$FLEET_STATE/$1.json"
+  if [ -f "$f" ]; then
+    jq -r '.state // "idle"' "$f" 2>/dev/null || echo idle
+  elif tmux has-session -t "$session" 2>/dev/null; then
+    echo attached
+  else
+    echo idle
+  fi
+}
+
+# `git worktree list --porcelain` -> "<path>\t<branch>" per worktree that is on
+# a branch. Paths are not quoted by git and may contain spaces, so take the
+# whole line after "worktree ", never $2. A detached worktree is reported with
+# the branch sentinel "(detached)"; bare entries have neither and are skipped.
+# shellcheck disable=SC2016  # awk program, $0/$2 are awk fields
+WORKTREE_AWK='/^worktree /{p=substr($0,10)} /^branch /{sub("refs/heads/","",$2); print p"\t"$2} /^detached$/{print p"\t(detached)"}'
+
+# ---------------------------------------------------------------- layout
+#
+# A project is a directory under FLEET_ROOT. Three layouts are recognised:
+#   plain      <project>/.git and nothing else: the clone as you always had
+#              it. Sessions run in the clone itself; no worktrees, no branches.
+#   worktrees  the same repo after `fleet convert` (marker: .git/fleet-worktrees):
+#              worktrees are created at <project>/.claude/worktrees/<task>
+#              (where Claude Code's own --worktree puts them), on branch
+#              agent/<task>, excluded from git status in the repo.
+#   container  <project>/main is the clone and worktrees are its siblings
+#              <project>/<task>. Older layout; still fully supported.
+# The primary clone is always reported as worktree "main", whatever branch
+# it is on.
+
+project_repo() {     # $1 project -> path of its primary clone, or fail
+  if   [ -e "$FLEET_ROOT/$1/main/.git" ]; then echo "$FLEET_ROOT/$1/main"
+  elif [ -e "$FLEET_ROOT/$1/.git" ];      then echo "$FLEET_ROOT/$1"
+  else return 1; fi
+}
+project_layout() {   # $1 project -> container | worktrees | plain | dir
+  if   [ -e "$FLEET_ROOT/$1/main/.git" ]; then echo container
+  elif [ -e "$FLEET_ROOT/$1/.git" ]; then
+    if [ -e "$FLEET_ROOT/$1/.git/fleet-worktrees" ]; then echo worktrees; else echo plain; fi
+  else echo dir; fi
+}
+worktree_path() {    # $1 project $2 task -> where that task's worktree lives
+  case "$(project_layout "$1")" in
+    container) echo "$FLEET_ROOT/$1/$2" ;;
+    *)         echo "$FLEET_ROOT/$1/.claude/worktrees/$2" ;;
+  esac
+}
+enable_worktrees() { # $1 primary clone path: idempotent part of `fleet convert`
+  # The marker lives inside .git so it is never committed and never confused
+  # with Claude Code's own .claude/worktrees/, which it also creates.
+  mkdir -p "$1/.claude/worktrees" "$1/.git/info"
+  : > "$1/.git/fleet-worktrees"
+  grep -qx '.claude/worktrees/' "$1/.git/info/exclude" 2>/dev/null \
+    || echo '.claude/worktrees/' >> "$1/.git/info/exclude"
+}
+realdir() { (cd "$1" 2>/dev/null && pwd -P); }   # git prints resolved paths
+
+# ---------------------------------------------------------------- status (local)
+
+# status_project <project>: one JSON object per worktree of that project, and
+# for the primary repo one per registered session in it (plain projects can
+# run several named sessions in the same directory), or a single unmanaged
+# "main" row if none.
+status_project() {
+  local project="$1" main mainreal wtpath branch name session state dirty ts subject
+  local ahead behind upstream managed activity in_wt sessions af remote claude_session hookjson stats
+  main=$(project_repo "$project") || return 0
+  mainreal=$(realdir "$main")
+  remote=$(git -C "$main" remote get-url origin 2>/dev/null || true)
+
+  git -C "$main" worktree list --porcelain 2>/dev/null \
+  | awk "$WORKTREE_AWK" \
+  | while IFS=$'\t' read -r wtpath branch; do
+      [ -d "$wtpath" ] || continue
+      if [ "$wtpath" = "$mainreal" ]; then
+        in_wt=false
+        sessions=$(sessions_in "$main"); [ -n "$sessions" ] || sessions=$(session_name "$project" main)
+      else
+        in_wt=true
+        sessions=$(session_name "$project" "$(basename "$wtpath")")
+      fi
+
+      if [ -n "$(git -C "$wtpath" status --porcelain 2>/dev/null)" ]; then dirty=true; else dirty=false; fi
+      ts=$(git -C "$wtpath" log -1 --format=%ct 2>/dev/null || echo 0)
+      subject=$(git -C "$wtpath" log -1 --format=%s 2>/dev/null || echo "")
+      ahead=0; behind=0
+      # On failure git still prints the literal "@{upstream}", so reset on error
+      # rather than `|| true`. A pruned upstream therefore reads as none.
+      upstream=$(git -C "$wtpath" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null) || upstream=""
+      if [ -n "$upstream" ]; then
+        # shellcheck disable=SC2046  # output is "<behind>\t<ahead>", splitting is the point
+        set -- $(git -C "$wtpath" rev-list --left-right --count "$upstream...HEAD" 2>/dev/null || echo "0 0")
+        behind=${1:-0}; ahead=${2:-0}
+      fi
+
+      for session in $sessions; do
+        if [ "$in_wt" = true ]; then name=$(basename "$wtpath")
+        else name=${session#"$(session_name "$project" "")"}; fi   # "<project>-<name>" -> "<name>"
+        state=$(agent_state "$session")
+        if is_managed "$session" "$in_wt"; then managed=true; else managed=false; fi
+        af=$(attached_from "$session" | tr '\n' ' ')
+        # Last sign of life: the newest hook event, else when fleet started the
+        # session, else 0. `ts` stays the last commit for the git view.
+        activity=0; hookjson='{}'; stats='{}'
+        claude_session=$(claude_session_id "$session")
+        if [ -f "$FLEET_STATE/$session.json" ]; then
+          hookjson=$(jq -c 'select(type == "object")' "$FLEET_STATE/$session.json" 2>/dev/null || true); [ -n "$hookjson" ] || hookjson='{}'
+          activity=$(printf '%s' "$hookjson" | jq -r '.ts // 0')
+          [ -n "$claude_session" ] || claude_session=$(printf '%s' "$hookjson" | jq -r '.session_id // ""')
+        elif [ -e "$FLEET_SESSIONS/$session" ]; then
+          activity=$(stat -f %m "$FLEET_SESSIONS/$session" 2>/dev/null || echo 0)
+        fi
+        if [ -f "$FLEET_STATE/$session.stats.json" ]; then
+          stats=$(jq -c 'select(type == "object")' "$FLEET_STATE/$session.stats.json" 2>/dev/null || true); [ -n "$stats" ] || stats='{}'
+        fi
+        jq -nc \
+          --arg host "$FLEET_SELF" --arg project "$project" --arg name "$name" \
+          --arg path "$wtpath" --arg branch "$branch" --arg state "$state" \
+          --arg subject "$subject" --arg session "$session" --arg upstream "$upstream" \
+          --argjson dirty "$dirty" --argjson ts "${ts:-0}" \
+          --argjson ahead "${ahead:-0}" --argjson behind "${behind:-0}" --argjson managed "$managed" \
+          --argjson activity "${activity:-0}" --argjson worktree "$in_wt" --arg af "$af" --arg remote "$remote" \
+          --arg claude_session "$claude_session" --argjson h "$hookjson" --argjson st "$stats" \
+          '$ARGS.named | .attached_from = (.af | split(" ") | map(select(. != ""))) | del(.af)
+           | .prompt = ($h.prompt // "" | if test("^\\s*<[a-z-]+[ >]") then "" else . end) | .note = ($h.note // "") | .said = ($h.said // "")
+           | .model = ($st.model // "") | .context_pct = ($st.context_pct // -1) | .cost_usd = ($st.cost_usd // 0)
+           | .limit_5h = ($st.limit_5h // -1) | .limit_5h_reset = ($st.limit_5h_reset // 0)
+           | .limit_7d = ($st.limit_7d // -1) | .limit_7d_reset = ($st.limit_7d_reset // 0)
+           | .stats_ts = ($st.ts // 0) | del(.h, .st)'
+      done
+    done
+}
+
+# Projects that have at least one registered session (second line of each
+# registry file). Used by `status --managed` to skip everything else.
+managed_projects() {
+  local f dir project
+  {
+    for f in "$FLEET_SESSIONS"/*; do
+      [ -e "$f" ] || continue
+      dir=$(sed -n 1p "$f"); project=$(sed -n 2p "$f")
+      if [ -z "$project" ]; then           # entry from before the project line existed
+        project=${dir#"$FLEET_ROOT"/}; project=${project%%/*}
+      fi
+      [ -n "$project" ] && printf '%s\n' "$project"
+    done 2>/dev/null
+    true
+  } | sort -u | tr '\n' ' ' || true
+  return 0
+}
+
+# status_local [--all] [--json]: this host's records as a JSON array.
+# Default: only projects with a registered session (all `ls` shows); --all:
+# every project. Every project is enumerated in parallel (one subshell each):
+# fifty clones is fifty git invocations back to back otherwise. --json is
+# accepted for symmetry with `fleet status`, which is what remotes run.
+status_local() {
+  need git; need jq
+  local mode="" only="" tmp pdir project a
+  for a in "$@"; do [ "$a" = "--all" ] && mode="--all"; done
+  [ "$mode" = "--all" ] || only=$(managed_projects || true)
+  # No RETURN trap here: this runs inside other functions' scopes (host_status
+  # within cmd_ls) and a RETURN trap would fire there and delete *their* tmp.
+  tmp=$(mktemp -d)
+  for pdir in "$FLEET_ROOT"/*/; do
+    project=$(basename "${pdir%/}")
+    if [ "$mode" != "--all" ]; then
+      case " $only " in *" $project "*) ;; *) continue ;; esac
+    fi
+    status_project "$project" > "$tmp/$project.json" &
+  done
+  wait
+  { cat "$tmp"/*.json 2>/dev/null || true; } | jq -sc '.'
+  rm -rf "$tmp"
+}
+
+# ---------------------------------------------------------------- gather (fan out)
+
+# Does Tailscale think this host is online? 0 yes, 1 no, 2 unknown (not a
+# tailnet peer, or no Tailscale here). Costs ~40ms and saves a full timeout
+# when a Mac is asleep: Tailscale still accepts the connection for it.
+tailscale_online() {
+  tailscale_status \
+    | jq -e --arg h "$1" '[.Peer[]? | select((.DNSName | split(".")[0]) == $h)] | .[0] // empty | .Online' >/dev/null 2>&1
+  case $? in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+
+# host_fetch <host> <dir> <local-fn> <remote-cmd> [mode]: run <local-fn> here
+# or <remote-cmd> over ssh, writing <dir>/<host>.json (valid JSON, else the
+# fallback) and, if the host did not answer with JSON, <dir>/<host>.down with
+# the reason. host_status is the `fleet status --json [--all]` flavour used by ls.
+host_status() { host_fetch "$1" "$2" status_local "fleet status --json" "${3:-}" '[]'; }
+host_fetch() {
+  local h="$1" dir="$2" fn="$3" rcmd="$4" mode="${5:-}" empty="${6:-[]}" f="$2/$1.raw" pid wd rc=0 reason=""
+  if [ "$h" = "$FLEET_SELF" ]; then
+    "$fn" "$mode" >"$f" 2>/dev/null || true
+  else
+    if tailscale_online "$h"; then :; elif [ $? -eq 1 ]; then
+      printf 'offline according to Tailscale' > "$dir/$h.down"; echo "$empty" > "$dir/$h.json"; return 0
+    fi
+    # ConnectTimeout only bounds the handshake. A wedged remote `fleet status`
+    # (index lock, sleeping disk) would otherwise block gather's `wait` forever,
+    # and macOS has no timeout(1), so run a watchdog alongside ssh. Output goes
+    # to a file, not a pipe, so a lingering child of ssh cannot hold us open.
+    ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$h" \
+        "$(with_path "$rcmd $mode")" >"$f" 2>/dev/null & pid=$!
+    ( sleep "$FLEET_CMD_TIMEOUT"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 & wd=$!
+    wait "$pid" 2>/dev/null || rc=$?
+    { kill "$wd" && wait "$wd"; } >/dev/null 2>&1 || true   # reap quietly, no "Terminated" notice
+    case "$rc" in
+      0) ;;
+      127) reason="fleet not installed (fleet install $h)" ;;
+      255) reason="ssh failed (fleet doctor $h)" ;;
+      143|137) reason="no answer in ${FLEET_CMD_TIMEOUT}s" ;;
+      *) reason="$rcmd exited $rc (fleet doctor $h; is fleet up to date there?)" ;;
+    esac
+  fi
+  # Partial output from a killed ssh, or a login banner, must not poison the
+  # merged array: anything that is not a JSON array counts as the host being down.
+  if [ -z "$reason" ] && jq -e 'type=="array" or type=="object"' "$f" >/dev/null 2>&1; then
+    jq -c . "$f" > "$dir/$h.json.tmp" && mv "$dir/$h.json.tmp" "$dir/$h.json"
+  else
+    printf '%s' "${reason:-no JSON back (fleet doctor $h)}" > "$dir/$h.down"; echo "$empty" > "$dir/$h.json"
+  fi
+  rm -f "$f"
+}
+
+# gather_into <dir>: fan out to every host in parallel. Afterwards <dir> holds
+# <host>.json per host and <host>.down for each host that did not answer.
+# While the fan-out runs, name the hosts that have not answered yet (stderr,
+# only when it is a terminal). An off host costs FLEET_SSH_TIMEOUT before it
+# counts as down, and this is what makes that wait visible rather than a hang.
+spinner() {   # $1 dir
+  local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0 h pending
+  sleep 0.3
+  while :; do
+    pending=""
+    for h in $FLEET_HOSTS; do [ -e "$1/$h.json" ] || pending="$pending $h"; done
+    printf '\r\033[K%s%s waiting for%s%s' "$DIM" "${frames:$((i % 10)):1}" "$pending" "$RESET" >&2
+    i=$((i + 1)); sleep 0.1
+  done
+}
+
+gather_into() {   # <dir> [--managed]
+  local h pids="" spin=""
+  [ -n "${FLEET_HOSTS// /}" ] || die "no hosts yet: fleet hosts add   (see fleet doctor)"
+  for h in $FLEET_HOSTS; do
+    host_status "$h" "$1" "${2:-}" & pids="$pids $!"
+  done
+  if [ -t 2 ] && [ -z "${FLEET_NO_SPINNER:-}" ]; then spinner "$1" & spin=$!; fi
+  # shellcheck disable=SC2086  # pids is a space-separated list of job ids
+  wait $pids
+  if [ -n "$spin" ]; then
+    { kill "$spin" && wait "$spin"; } >/dev/null 2>&1 || true
+    printf '\r\033[K' >&2
+  fi
+}
+
+# Which hosts in <dir> are down, space separated; down_reasons lists "host: why".
+down_hosts()   { local f; for f in "$1"/*.down; do [ -e "$f" ] && printf ' %s' "$(basename "$f" .down)"; done; return 0; }
+down_reasons() { local f; for f in "$1"/*.down; do [ -e "$f" ] && printf '  %s: %s\n' "$(basename "$f" .down)" "$(cat "$f")"; done; return 0; }
+
+gather() {   # [--all]: merged records from every host (default: fleet's sessions only)
+  local tmp
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  gather_into "$tmp" "${1:-}"
+  jq -s 'add // [] | sort_by(-.ts)' "$tmp"/*.json
+}
+
+# ---------------------------------------------------------------- ls
+
+# fleet status [--all] [--json]: this machine only. Same flags and rendering
+# as ls; --json is the per-host wire format remotes are asked for.
+cmd_status() {
+  local a asjson=0 all=""
+  for a in "$@"; do case "$a" in --json) asjson=1 ;; --all) all="--all" ;; *) die "usage: fleet status [--all] [--json]" ;; esac; done
+  if [ "$asjson" = 1 ]; then status_local $all; return 0; fi
+  FLEET_HOSTS="$FLEET_SELF"
+  # shellcheck disable=SC2086  # $all is a flag or empty
+  cmd_ls $all
+}
+
+# Text and colour are returned separately so padding counts visible
+# characters, not escape bytes. All markers are narrow BMP glyphs. Padding is
+# done by hand because bash 3.2's printf pads %s by bytes, not characters.
+pad() {
+  local n=$(( $2 - ${#1} ))
+  printf '%s' "$1"
+  [ "$n" -gt 0 ] && printf '%*s' "$n" ''
+  return 0
+}
+badge_text() {
+  case "$1" in
+    running)  echo "● running"    ;;
+    blocked)  echo "▲ needs you"  ;;
+    done)     echo "✓ done"       ;;
+    attached) echo "◦ alive"      ;;   # tmux session exists; no word from Claude Code (hooks not installed, or nothing yet)
+    *)        echo "· idle"       ;;
+  esac
+}
+badge_color() {
+  case "$1" in
+    running)  printf '%s' "$GREEN"  ;;
+    blocked)  printf '%s' "$YELLOW" ;;
+    done)     printf '%s' "$BLUE"   ;;
+    *)        printf '%s' "$DIM"    ;;
+  esac
+}
+
+# fleet ls [--all] [--json] [host...]
+# Default: sessions fleet started (`.managed`), whatever their state, as a
+# table. --all: every worktree and clone. --json: the merged records instead
+# of the table (what a wrapper app consumes). Hosts named restrict the fan-out.
+cmd_ls() {
+  local json tmp down up h all=0 asjson=0 filter='.' hosts=""
+  for h in "$@"; do
+    case "$h" in
+      --all)  all=1 ;;
+      --json) asjson=1 ;;
+      *) case " $FLEET_HOSTS " in *" $h "*) hosts="$hosts $h" ;; *) die "unknown host '$h'. hosts:$(hosts_line)" ;; esac ;;
+    esac
+  done
+  [ -z "$hosts" ] || FLEET_HOSTS="$hosts"
+  [ "$all" = 1 ] || filter='map(select(.managed))'
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  if [ "$all" = 1 ]; then gather_into "$tmp" --all; else gather_into "$tmp" ""; fi
+  json=$(jq -s "add // [] | $filter | sort_by(-.ts)" "$tmp"/*.json)
+  if [ "$asjson" = 1 ]; then printf '%s\n' "$json"; return 0; fi
+  down=$(down_hosts "$tmp")
+  up=""; for h in $FLEET_HOSTS; do case " $down " in *" $h "*) ;; *) up="$up $h" ;; esac; done
+  if [ "$(echo "$json" | jq 'length')" -eq 0 ]; then
+    if [ "$all" = 1 ]; then [ -n "$up" ] && printf 'no clones or worktrees on%s\n' "$up"
+    else [ -n "$up" ] && printf 'no fleet sessions on%s\n' "$up"; fi
+    [ -n "$down" ] && printf '%snot answering:\n%s%s\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"
+    printf '%sstart one:  fleet new <host>        everything:  fleet ls --all%s\n' "$DIM" "$RESET"
+    return
+  fi
+
+  # The account's usage limits, from the freshest status line snapshot on
+  # any host (one account, so one answer).
+  echo "$json" | jq -r 'map(select((.stats_ts // 0) > 0 and ((.limit_5h // -1) >= 0 or (.limit_7d // -1) >= 0))) | sort_by(-.stats_ts) | .[0] // empty
+    | [ (if .limit_5h >= 0 then "5-hour \(.limit_5h)%" else empty end), (if .limit_7d >= 0 then "7-day \(.limit_7d)%" else empty end) ]
+    | "usage: " + join("  ·  ")' \
+  | { read -r line && printf '%s%s%s\n' "$DIM" "$line" "$RESET"; } || true
+  # Time column: last activity (hook event, else session start) when there is
+  # one, else the last commit. Sorted the same way within a project. The last
+  # column is what the agent is asking for (blocked), else what it is doing.
+  echo "$json" | jq -r --arg me "$FLEET_SELF" 'map(.shown = (if (.activity // 0) > 0 then .activity else .ts end))
+    | sort_by(.project, -.shown)[]
+    | [.project,.name,.host,.state,.branch,(.shown|tostring),.dirty,(.ahead|tostring),(.behind|tostring),((.upstream=="")|tostring),
+       ((.attached_from // []) as $a | if ($a | index($me)) then "here" elif ($a | length) > 0 then ($a | join(",")) else "-" end),
+       (if .state == "blocked" and (.note // "") != "" then .note elif (.prompt // "") != "" then .prompt else "" end | .[:60])]
+    | @tsv' \
+  | {
+      local last_project="" project name host state branch ts dirty ahead behind noup att doing flags
+      while IFS=$'\t' read -r project name host state branch ts dirty ahead behind noup att doing; do
+        if [ "$project" != "$last_project" ]; then
+          printf '\n%s%s%s\n' "$BOLD" "$project" "$RESET"
+          last_project="$project"
+        fi
+        flags=""
+        [ "$dirty" = "true" ]  && flags="$flags ${RED}*${RESET}"
+        [ "$ahead"  != "0" ]   && flags="$flags ${DIM}↑$ahead${RESET}"
+        [ "$behind" != "0" ]   && flags="$flags ${DIM}↓$behind${RESET}"
+        case "$att" in
+          here) flags="$flags ${GREEN}◉ attached here${RESET}" ;;
+          -) ;;
+          *) flags="$flags ${DIM}◉ attached: ${att//,/ }${RESET}" ;;
+        esac
+        if [ "$branch" = "(detached)" ]; then flags="$flags ${DIM}detached${RESET}"
+        elif [ "$noup" = "true" ] && [ "$name" != "main" ]; then flags="$flags ${DIM}no upstream${RESET}"; fi
+        [ -n "$doing" ] && flags="$flags ${DIM}· $doing${RESET}"
+        printf '  %s %s %s%s%s %s%s\n' \
+          "$(pad "$name" 16)" "$(pad "$host" 8)" \
+          "$(badge_color "$state")" "$(pad "$(badge_text "$state")" 13)" "$RESET" \
+          "$(pad "$(reltime "$ts")" 10)" "$flags"
+      done
+    }
+  echo
+  [ -n "$down" ] && printf '%snot answering:\n%s%s\n\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"
+  return 0
+}
+
+# ---------------------------------------------------------------- pick
+
+# pick <mode> [query]: the session/worktree picker. <mode> is "" (fleet's
+# sessions) or --all (everything). The fan-out runs in the background
+# and rows stream into fzf as each host answers, so the list opens at once
+# and fills in; fzf's own info line spins while input is still arriving and
+# the header names the hosts being asked. Emits the chosen record as
+# "<display>\thost\tproject\tname\tbranch\tsession\tpath\tstate\tworktree".
+# fzf shows the padded display columns (tabs would not line up) and matches
+# only the project name (--nth=1 with a 2+-space/tab delimiter).
+stream_rows() {   # $1 dir: rows for each host's json as it appears, until all hosts are in
+  local seen="" h n total=0 host project name branch session path state
+  for h in $FLEET_HOSTS; do total=$((total + 1)); done
+  n=0
+  while [ "$n" -lt "$total" ]; do
+    for h in $FLEET_HOSTS; do
+      case " $seen " in *" $h "*) continue ;; esac
+      [ -e "$1/$h.json" ] || continue
+      seen="$seen $h"; n=$((n + 1))
+      jq -r --arg me "$FLEET_SELF" "$2"' | .[] | [.host,.project,.name,.branch,.session,.path,.state,(.worktree // false | tostring),
+            ((.attached_from // []) as $a | if ($a | index($me)) then "◉ attached here" elif ($a | length) > 0 then "◉ attached: " + ($a | join(" ")) else "" end)] | @tsv' "$1/$h.json" 2>/dev/null \
+      | while IFS=$'\t' read -r host project name branch session path state worktree att; do
+          printf '%s  %s  %s  %s  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$(pad "$project" 24)" "$(pad "$name" 20)" "$(pad "$host" 10)" "$(pad "$(badge_text "$state")" 13)" "${DIM}${att}${RESET}" \
+            "$host" "$project" "$name" "$branch" "$session" "$path" "$state" "$worktree"
+        done
+    done
+    [ "$n" -lt "$total" ] && sleep 0.1
+  done
+  return 0
+}
+
+pick() {
+  need fzf
+  local mode="${1:-}" query="${2:-}" select1="" filter='.' tmp sel
+  [ -n "$query" ] && select1="--select-1"      # a query that matches one row skips the menu; no query always shows it
+  [ "$mode" = "--all" ] || filter='map(select(.managed))'
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  FLEET_NO_SPINNER=1 gather_into "$tmp" "$mode" >/dev/null 2>&1 &
+  sel=$(stream_rows "$tmp" "$filter" \
+    | fzf --ansi --delimiter='[ ]{2,}|\t' --nth=1 --with-nth=1..5 --query="$query" \
+          $select1 --exit-0 --height=40% --reverse \
+          --header="$(pad project 24)  $(pad worktree 20)  $(pad host 10)  $(pad state 13)  attached      asking:$(hosts_line)") || true
+  if [ -z "$sel" ]; then
+    # Nothing chosen: either the user cancelled or no host had a row.
+    if [ "$(cat "$tmp"/*.json 2>/dev/null | jq -s "add // [] | $filter | length")" -eq 0 ]; then
+      printf 'no fleet sessions on%s\n%sstart one:  fleet new <host>%s\n' "$(hosts_line)" "$DIM" "$RESET" >&2
+    fi
+    return 1
+  fi
+  printf '%s\n' "$sel"
+}
+
+# ---------------------------------------------------------------- terminal
+
+# The terminal window title follows the tmux session ("<session> · fleet"),
+# which is what lets us find a window that already shows the session.
+title_opts() { local q; q=$(shq "$1"); printf "tmux set-option -q -t %s set-titles on 2>/dev/null; tmux set-option -q -t %s set-titles-string '#S · fleet' 2>/dev/null" "$q" "$q"; }
+
+# raise_term_window <term> <session>: bring an existing window showing the
+# session to the front. Prints "raised" and returns 0 if one was found.
+raise_term_window() {
+  local term="$1" marker="$2 · fleet" out=""
+  case "$term" in
+    ghostty) out=$(osascript - "$marker" <<'EOF' 2>/dev/null || true
+on run argv
+  tell application "Ghostty"
+    repeat with w in windows
+      repeat with t in terminals of w
+        if name of t contains (item 1 of argv) then
+          focus t
+          activate
+          return "raised"
+        end if
+      end repeat
+    end repeat
+  end tell
+  return ""
+end run
+EOF
+) ;;
+    terminal) out=$(osascript - "$marker" <<'EOF' 2>/dev/null || true
+on run argv
+  tell application "Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (custom title of t contains (item 1 of argv)) or (name of w contains (item 1 of argv)) then
+          set selected of t to true
+          set index of w to 1
+          set frontmost of w to true
+          activate
+          return "raised"
+        end if
+      end repeat
+    end repeat
+  end tell
+  return ""
+end run
+EOF
+) ;;
+    iterm) out=$(osascript - "$marker" <<'EOF' 2>/dev/null || true
+on run argv
+  tell application "iTerm"
+    repeat with w in windows
+      repeat with t in tabs of w
+        repeat with s in sessions of t
+          if name of s contains (item 1 of argv) then
+            select s
+            select t
+            select w
+            activate
+            return "raised"
+          end if
+        end repeat
+      end repeat
+    end repeat
+  end tell
+  return ""
+end run
+EOF
+) ;;
+  esac
+  [ "$out" = raised ] && { printf 'raised\n'; return 0; }
+  return 1
+}
+
+# open_term_window <term> <shell command>: a new window in the running app.
+open_term_window() {
+  local term="$1" cmd="$2"
+  case "$term" in
+    ghostty)   # Ghostty 1.3+ is scriptable: no helper instance, no second Dock icon.
+      osascript - "$cmd" <<'EOF'
+on run argv
+  tell application "Ghostty"
+    set cfg to new surface configuration
+    set command of cfg to (item 1 of argv)
+    set wait after command of cfg to false
+    new window with configuration cfg
+    activate
+  end tell
+end run
+EOF
+      ;;
+    terminal)
+      osascript - "$cmd" <<'EOF'
+on run argv
+  tell application "Terminal"
+    do script (item 1 of argv)
+    activate
+  end tell
+end run
+EOF
+      ;;
+    iterm)
+      osascript - "$cmd" <<'EOF'
+on run argv
+  tell application "iTerm"
+    create window with default profile command (item 1 of argv)
+    activate
+  end tell
+end run
+EOF
+      ;;
+    *) die "FLEET_TERM=$term: expected inline, ghostty, terminal or iterm" ;;
+  esac
+}
+
+launch_term() {
+  # $1 host, $2 tmux session, $3 cwd on that host
+  # Default (FLEET_TERM=inline): attach right here, in the terminal you ran
+  # fleet from, replacing the fleet process; detach with the tmux prefix + d
+  # and you are back at your shell. Inside tmux already, switch client instead
+  # of nesting. Remote: `ssh -t host tmux ...` in this terminal.
+  # FLEET_TERM=ghostty|terminal|iterm (what the app uses): if that terminal
+  # already has a window on this session, bring it to the front; otherwise open
+  # a new window there, running the same attach. Either way a remote without
+  # Ghostty's terminfo (fleet install pushes it) falls back to TERM=xterm-256color.
+  # Session and directory are quoted with shq wherever they land in a string
+  # a shell will parse: a name with a quote in it must not break out of it.
+  local host="$1" session="$2" dir="$3" inner term="${FLEET_TERM:-inline}" brand qs qd
+  qs=$(shq "$session"); qd=$(shq "$dir")
+  brand="tmux set-option -q -t $qs status-left-length 60 2>/dev/null; tmux set-option -q -t $qs status-left '#[fg=black,bg=green,bold] $host #[default] #S ' 2>/dev/null; $(title_opts "$session")"
+  inner=$(with_path "infocmp \"\$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; cd $qd 2>/dev/null; $brand; tmux new-session -A -s $qs")
+  if [ "$term" != inline ]; then
+    if raise_term_window "$term" "$session" >/dev/null; then
+      printf '%s  %s already shows %s, brought to front%s\n' "$DIM" "$term" "$session" "$RESET"; return 0
+    fi
+    # The command runs via the login shell locally so the user's PATH and rc
+    # files apply; remotely it is ssh.
+    local cmd
+    if [ "$host" = "$FLEET_SELF" ]; then cmd="bash -lc $(printf '%q' "$inner")"
+    else cmd="ssh -t $(printf '%q' "$host") $(printf '%q' "$inner")"; fi
+    open_term_window "$term" "$cmd"
+    return 0
+  fi
+  if [ "$host" = "$FLEET_SELF" ]; then
+    need tmux
+    brand_session "$session" "$host"
+    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$session"
+    else exec tmux new-session -A -s "$session" -c "$dir"; fi
+  else
+    exec ssh -t "$host" "$inner"
+  fi
+}
+
+# ---------------------------------------------------------------- commands
+
+# record_for <host> <session> <mode>: the record for one session on one host,
+# in the same "<display>\thost\tproject\tname\tbranch\tsession\tpath\tstate\tworktree"
+# shape pick emits, so attach/open can take a host and session directly.
+record_for() {
+  local h="$1" sess="$2" mode="${3:-}" tmp line
+  case " $FLEET_HOSTS " in *" $h "*) ;; *) die "unknown host '$h'. hosts:$(hosts_line)" ;; esac
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  host_status "$h" "$tmp" "$mode"
+  line=$(jq -r --arg s "$sess" '.[] | select(.session == $s)
+           | [.host,.project,.name,.branch,.session,.path,.state,(.worktree // false | tostring)] | @tsv' "$tmp/$h.json" 2>/dev/null | head -1)
+  if [ -z "$line" ]; then
+    [ -e "$tmp/$h.down" ] && die "$h: $(cat "$tmp/$h.down")"
+    die "no session '$sess' on $h   (fleet ls $h)"
+  fi
+  printf -- '-\t%s\n' "$line"
+}
+
+# fleet attach [query] | fleet attach <host> <session>
+cmd_attach() {
+  if [ $# -ge 2 ]; then
+    local sel; sel=$(record_for "$1" "$2" "") || return 1
+    IFS=$'\t' read -r _ host project name branch session path state _ <<< "$sel"
+    launch_term "$host" "$session" "$path"
+    return 0
+  fi
+  # Only sessions fleet started; anything else has no tmux session to attach to.
+  local sel; sel=$(pick "" "${1:-}") || return 1
+  [ -z "$sel" ] && return 1
+  IFS=$'\t' read -r _ host project name branch session path state _ <<< "$sel"
+  launch_term "$host" "$session" "$path"
+}
+
+# shq <string>: single-quoted for sh/zsh, whatever is in it.
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# fleet shell [host] [dir]: a login shell on that Mac, in <dir> when given
+# (the app passes a session's directory). Inline it replaces this process
+# (ssh, or your shell when the host is this one); with FLEET_TERM set it
+# opens a window in that terminal app, as attach does.
+cmd_shell() {
+  local host="${1:-$FLEET_SELF}" dir="${2:-}" term="${FLEET_TERM:-inline}" cmd inner=""
+  case " $FLEET_HOSTS " in *" $host "*) ;; *) die "unknown host '$host'. hosts:$(hosts_line)" ;; esac
+  # shellcheck disable=SC2016  # $SHELL is for the shell that runs it (sshd sets it to the login shell)
+  [ -z "$dir" ] || inner="cd $(shq "$dir") 2>/dev/null; exec \${SHELL:-/bin/zsh} -l"
+  if [ "$host" = "$FLEET_SELF" ]; then
+    if [ -n "$inner" ]; then cmd="bash -c $(shq "$inner")"; else cmd="bash -l"; fi
+  else
+    cmd="ssh -t $(printf '%q' "$host")${inner:+ $(shq "$inner")}"
+  fi
+  if [ "$term" != inline ]; then open_term_window "$term" "$cmd"; return 0; fi
+  if [ "$host" = "$FLEET_SELF" ]; then
+    [ -z "$dir" ] || cd "$dir" 2>/dev/null || die "no directory $dir"
+    exec "${SHELL:-/bin/zsh}" -l
+  elif [ -n "$inner" ]; then exec ssh -t "$host" "$inner"
+  else exec ssh -t "$host"; fi
+}
+
+# fleet kill [-y] <host> <session>: end a fleet session: its tmux session,
+# the agent inside it, and its state file. A session in the repo itself is
+# forgotten; a worktree session stays listed (idle) until `fleet reap`
+# removes the worktree. Asks first unless -y (wrapper apps confirm themselves).
+cmd_kill() {
+  local yes=0 a sel host project name branch session path state
+  if [ "${1:-}" = "--local" ]; then kill_local "${2:-}"; return 0; fi
+  if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then yes=1; shift; fi
+  [ $# -ge 2 ] || die "usage: fleet kill [-y] <host> <session>"
+  sel=$(record_for "$1" "$2" "") || return 1
+  IFS=$'\t' read -r _ host project name branch session path state _ <<< "$sel"
+  if [ "$yes" != 1 ]; then
+    [ -t 0 ] || die "refusing to end $session on $host without -y"
+    printf 'end %s on %s (%s)? the agent is asked to exit, then the session is closed. [y/N] ' "$session" "$host" "$state"
+    read -r a </dev/tty
+    case "$a" in y|Y) ;; *) die "left as is" ;; esac
+  fi
+  # shellcheck disable=SC2016  # the single quotes are for the remote shell
+  run_on "$host" "fleet kill --local $(shq "$session")" || die "fleet kill failed on $host"
+}
+# What runs in the foreground of a session's pane: claude, zsh, xcodebuild...
+pane_command() { tmux list-panes -t "$1" -F '#{pane_current_command}' 2>/dev/null | head -1; }
+
+# Ask the agent in a session to leave before the session is torn down: Escape
+# interrupts a running turn (or dismisses a permission prompt), then /exit
+# lets Claude Code finish its shutdown (transcript, Remote Control). Waits up
+# to FLEET_EXIT_TIMEOUT for the pane to be back at a shell; the caller kills
+# the session either way. Prints one dim line per step, as open does.
+agent_exit() {   # $1 session
+  local s="$1" cmd i
+  cmd=$(pane_command "$s")
+  case "$cmd" in ""|sh|bash|zsh|fish|tmux) return 0 ;; esac   # nothing to ask
+  printf '%s  asking %s in %s to exit%s\n' "$DIM" "$cmd" "$s" "$RESET"
+  tmux send-keys -t "$s" Escape 2>/dev/null || return 0
+  sleep 0.3
+  tmux send-keys -t "$s" C-u '/exit' Enter 2>/dev/null || return 0
+  i=0
+  while [ "$i" -lt "$((FLEET_EXIT_TIMEOUT * 2))" ]; do
+    sleep 0.5; i=$((i + 1))
+    case "$(pane_command "$s")" in ""|sh|bash|zsh|fish|tmux) printf '%s  %s exited%s\n' "$DIM" "$cmd" "$RESET"; return 0 ;; esac
+  done
+  printf '%s  %s still running after %ss, killed%s\n' "$YELLOW" "$cmd" "$FLEET_EXIT_TIMEOUT" "$RESET"
+}
+kill_local() {   # $1 session
+  local s="$1" f dir project repo
+  [ -n "$s" ] || die "usage: fleet kill --local <session>"
+  if tmux has-session -t "$s" 2>/dev/null; then
+    agent_exit "$s"
+    tmux kill-session -t "$s" 2>/dev/null || true
+  fi
+  rm -f "$FLEET_STATE/$s.json"
+  f="$FLEET_SESSIONS/$s"
+  if [ -e "$f" ]; then
+    dir=$(sed -n 1p "$f"); project=$(sed -n 2p "$f")
+    repo=$(project_repo "$project" 2>/dev/null) || repo=""
+    [ -n "$repo" ] && [ "$(realdir "$dir")" = "$(realdir "$repo")" ] && rm -f "$f"
+  fi
+  printf 'ended %s\n' "$s"
+}
+
+# ---------------------------------------------------------------- projects
+#
+# What is under FLEET_ROOT on this machine, one line per folder:
+#   <name> \t <layout> \t <claude>
+# layout: worktrees or plain; folders that are not repositories are skipped.
+# claude: yes if the repo has a CLAUDE.md or .claude/, i.e. Claude has been
+# used there before. Sorted claude-first, then fleet, git, dir, then name.
+projects_local() {
+  local d name kind claude root rank remote
+  for d in "$FLEET_ROOT"/*/; do
+    [ -d "$d" ] || continue
+    d=${d%/}; name=$(basename "$d")
+    kind=$(project_layout "$name")
+    case "$kind" in
+      container) kind=worktrees; root="$d/main"; rank=0 ;;
+      worktrees) root="$d"; rank=0 ;;
+      plain)     root="$d"; rank=1 ;;
+      *)         root="$d"; rank=2 ;;          # not a repository yet; hidden unless --all
+    esac
+    claude=no
+    if [ -e "$root/CLAUDE.md" ] || [ -d "$root/.claude" ]; then claude=yes; rank=$((rank-10)); fi
+    remote=$(git -C "$root" remote get-url origin 2>/dev/null || true)
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$rank" "$name" "$kind" "$claude" "$root" "$remote"
+  done | sort -t "$(printf '\t')" -k1,1n -k2,2f | cut -f2-
+}
+
+# run_on <host> <command>: run a fleet command line here or over ssh.
+run_on() {
+  if [ "$1" = "$FLEET_SELF" ]; then
+    bash -c "$(script_path)${2#fleet}"          # this very script, whatever PATH says
+  else
+    ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$1" "$(with_path "$2")"
+  fi
+}
+
+cmd_projects() {   # fleet projects [host] [--all] [--json]; --all includes folders that are not repos yet
+  local host="$FLEET_SELF" json=0 all=0 a
+  for a in "$@"; do
+    case "$a" in --local) projects_local; return 0 ;; --json) json=1 ;; --all) all=1 ;; *) host="$a" ;; esac
+  done
+  if [ "$json" = 1 ]; then
+    run_on "$host" 'fleet projects --local' \
+      | jq -Rsc --arg host "$host" --argjson all "$all" '{host: $host, projects: [split("\n")[] | select(length > 0) | split("\t")
+          | {project: .[0], layout: .[1], claude: (.[2] == "yes"), path: .[3], remote: (.[4] // "")} | select($all == 1 or .layout != "dir")]}'
+    return 0
+  fi
+  run_on "$host" 'fleet projects --local' \
+    | awk -F '\t' -v all="$all" '$2 != "dir" || all == 1' \
+    | awk -F '\t' -v B="$BOLD" -v D="$DIM" -v R="$RESET" '
+        BEGIN { printf "%-28s %-7s %s\n", "project", "layout", "claude" }
+        { printf "%s%-28s%s %-7s %s\n", ($3=="yes"?B:""), $1, R, $2, ($3=="yes"?"yes":D "no" R) }'
+}
+
+# ---------------------------------------------------------------- new
+
+# tmux status line for a fleet session: the machine you are on, then the
+# session name, so an attached window always says where it lives.
+# $1 session, $2 host label. Harmless to repeat; ignored if tmux is missing.
+brand_session() {
+  tmux set-option -q -t "$1" status-left-length 60 2>/dev/null || true
+  tmux set-option -q -t "$1" status-left "#[fg=black,bg=green,bold] $2 #[default] #S " 2>/dev/null || true
+  tmux set-option -q -t "$1" set-titles on 2>/dev/null || true
+  tmux set-option -q -t "$1" set-titles-string '#S · fleet' 2>/dev/null || true
+}
+
+# Start (or re-use) a session on THIS machine. Prints the directory the
+# session runs in and nothing else on stdout, because the remote form of
+# `fleet new` reads it back over ssh.
+#   new_local <project>          session in the clone itself (any layout)
+#   new_local <project> <task>   worktree + branch agent/<task>; the project
+#                                must be converted (or in container layout)
+new_local() {
+  local project="$1" task="${2:-}" main layout dir branch base session
+  need git; need tmux; need claude
+  main=$(project_repo "$project") || die "no clone for $project under $FLEET_ROOT"
+  layout=$(project_layout "$project")
+  if [ -z "$task" ]; then
+    dir="$main"; session=$(session_name "$project" main)
+  elif [ "$layout" = plain ]; then
+    # Plain project: a name is just another session in the same repo.
+    dir="$main"; session=$(session_name "$project" "$task")
+  else
+    branch="${FLEET_BRANCH_PREFIX}${task}"
+    dir=$(worktree_path "$project" "$task")
+    session=$(session_name "$project" "$task")
+    git -C "$main" fetch origin --prune -q 2>/dev/null || true
+    git -C "$main" worktree prune
+    if [ ! -d "$dir" ]; then
+      mkdir -p "$(dirname "$dir")"
+      if git -C "$main" show-ref -q --verify "refs/heads/$branch"; then
+        git -C "$main" worktree add -q "$dir" "$branch"        # branch survived an earlier reap
+      else
+        base=$(default_base "$main") || base=HEAD               # branch from origin, not stale local main
+        git -C "$main" worktree add -q -b "$branch" "$dir" "$base"
+      fi
+    fi
+  fi
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    # A shell with claude typed into it, not `claude` as the session command,
+    # so the session (and the `attached` fallback state) outlives the agent.
+    tmux new-session -d -s "$session" -c "$dir"
+    # Named after the tmux session so the phone app and fleet ls agree;
+    # --remote-control makes it reachable from claude.ai/code and the mobile
+    # app, --permission-mode auto starts it in auto mode. FLEET_CLAUDE_ARGS in
+    # the config changes the flags per machine.
+    tmux send-keys -t "$session" "claude -n $(shq "$session") $FLEET_CLAUDE_ARGS" Enter
+  fi
+  brand_session "$session" "$FLEET_SELF"
+  register_session "$session" "$dir" "$project"
+  printf '%s\n' "$dir"
+}
+
+# fleet new <host> [project] [task]
+# Pick the machine, then a folder under its FLEET_ROOT (folders Claude has
+# used before come first), then, for a project set up for worktrees, a task
+# name. A plain project just gets a session in its clone. The host does the
+# work via `fleet new --local`, so its own FLEET_ROOT applies.
+cmd_new() {
+  if [ "${1:-}" = "--local" ]; then
+    shift
+    [ -n "${1:-}" ] || die "usage: fleet new --local <project> [task] [--init]"
+    case " $* " in *" --init "*)
+      [ -e "$FLEET_ROOT/$1/.git" ] || git -C "$FLEET_ROOT/$1" init -q >/dev/null 2>&1 || die "git init failed in $FLEET_ROOT/$1" ;;
+    esac
+    set -- "${@/--init/}"
+    new_local "$1" "${2:-}"
+    return 0
+  fi
+  # fleet new [host] [project] [task]: a first argument that is a known host
+  # selects it; anything else means this machine, and the argument is the
+  # project pattern. No arguments at all: pick a project on this machine.
+  local host="$FLEET_SELF" pattern task list sel project kind dir a all=0 init="" noattach=0
+  # --all anywhere: also offer folders that are not git repositories yet.
+  # --no-attach: create or reuse the session and print host, session and
+  # directory, but leave the terminal alone (for wrapper apps).
+  for a in "$@"; do case "$a" in --all) all=1 ;; --no-attach) noattach=1 ;; esac; done
+  set -- "${@/--all/}"; set -- "${@/--no-attach/}"; while [ $# -gt 0 ] && [ -z "$1" ]; do shift; done
+  if [ $# -eq 0 ]; then
+    host=$(pick_host) || return 1            # bare `fleet new`: choose the machine first
+  elif [ -n "${1:-}" ]; then
+    case " $FLEET_HOSTS " in *" $1 "*) host="$1"; shift ;; esac
+  fi
+  pattern="${1:-}"; task="${2:-}"
+  need fzf
+  list=$(run_on "$host" 'fleet projects --local' 2>/dev/null) || die "could not list projects on $host (fleet doctor $host)"
+  # Folders that are not repositories are hidden unless --all, or the pattern names one exactly.
+  if [ "$all" != 1 ]; then
+    list=$(printf '%s\n' "$list" | awk -F '\t' -v want="$pattern" '$2 != "dir" || $1 == want')
+  fi
+  # Non-interactive: the project must be named exactly; no fuzzy pick.
+  if [ "$noattach" = 1 ]; then
+    [ -n "$pattern" ] || die "fleet new --no-attach needs an exact project name"
+    list=$(printf '%s\n' "$list" | awk -F '\t' -v want="$pattern" '$1 == want')
+    [ -n "$list" ] || die "no project '$pattern' on $host   (fleet projects $host)"
+  fi
+  [ -n "$list" ] || die "nothing under FLEET_ROOT on $host   (fleet new $host --all shows folders that are not repos yet)"
+  # Display columns padded by hand and separated by two spaces (tabs would not
+  # line up in fzf); the delimiter splits on 2+ spaces or a tab, so --nth=1
+  # matches the project name only. Raw fields ride along hidden after a tab.
+  sel=$(printf '%s\n' "$list" \
+    | while IFS=$'\t' read -r project kind a; do
+        printf '%s  %s  %s\t%s\t%s\n' "$(pad "$project" 28)" "$(pad "$kind" 9)" \
+          "$([ "$a" = yes ] && printf 'claude' || printf '%s' "$DIM-$RESET")" "$project" "$kind"
+      done \
+    | fzf --ansi --delimiter='[ ]{2,}|\t' --nth=1 --with-nth=1..3 --query="${pattern//\*/}" \
+          --select-1 --exit-0 --height=40% --reverse \
+          --header="$(pad "project on $host" 28)  $(pad layout 9)  claude   (plain = works directly in the repo; worktrees = fleet convert done; dir = not a repo yet)") || return 1
+  [ -n "$sel" ] || return 1
+  IFS=$'\t' read -r _ project kind <<< "$sel"
+  # Prompts only when interactive; --no-attach (wrapper apps) takes defaults.
+  case "$kind" in
+    dir)
+      [ "$noattach" = 1 ] && die "$project on $host is not a git repository; init it there first"
+      printf '%s on %s is not a git repository. git init it (so fleet can track it)? [y/N] ' "$project" "$host"
+      read -r a </dev/tty
+      case "$a" in y|Y) init="--init" ;; *) die "left as is" ;; esac
+      if [ -z "$task" ]; then
+        printf 'session name (empty = main): '
+        read -r task </dev/tty
+      fi ;;
+    plain)
+      if [ -z "$task" ] && [ "$noattach" != 1 ]; then
+        printf 'session name (empty = main; several named sessions can share this repo): '
+        read -r task </dev/tty
+      fi ;;
+    *)
+      if [ -z "$task" ] && [ "$noattach" != 1 ]; then
+        printf 'task name to work in a new worktree (branch %s<task>), or leave empty to work directly in the repo: ' "$FLEET_BRANCH_PREFIX"
+        read -r task </dev/tty
+      fi ;;
+  esac
+  # shellcheck disable=SC2016  # the single quotes are for the remote shell
+  dir=$(run_on "$host" "fleet new --local $(shq "$project")${task:+ $(shq "$task")}${init:+ $init}") || die "fleet new failed on $host"
+  if [ "$noattach" = 1 ]; then
+    printf '%s\t%s\t%s\n' "$host" "$(session_name "$project" "${task:-main}")" "$dir"
+    return 0
+  fi
+  launch_term "$host" "$(session_name "$project" "${task:-main}")" "$dir"
+}
+
+# fleet convert <project>: enable worktrees for a plain clone on THIS machine.
+# Nothing moves. Worktrees will live at <project>/.claude/worktrees/<task>.
+cmd_convert() {
+  local project="${1:-}" main
+  [ -n "$project" ] || die "usage: fleet convert <project>    (a folder under $FLEET_ROOT on this machine)"
+  main=$(project_repo "$project") || die "no clone at $FLEET_ROOT/$project"
+  case "$(project_layout "$project")" in
+    plain)
+      enable_worktrees "$main"
+      printf '%s converted: worktrees go in %s/.claude/worktrees/<task> (excluded from git status).\n' "$project" "$main"
+      printf 'now: fleet new %s %s <task>\n' "$FLEET_SELF" "$project" ;;
+    *) printf '%s already uses worktrees\n' "$project" ;;
+  esac
+}
+
+prewarm() {
+  local dir="$1" scheme
+  scheme=$(cd "$dir" && xcodebuild -list -json 2>/dev/null \
+    | jq -r '(.project.schemes // .workspace.schemes // [])[0] // empty') || return 0
+  [ -n "$scheme" ] || return 0
+  ( cd "$dir" && nohup xcodebuild -scheme "$scheme" \
+      -destination "platform=iOS Simulator,name=$FLEET_SIM" \
+      -derivedDataPath "$dir/.build" build >/dev/null 2>&1 & ) || true
+  printf '%s  prewarming %s%s\n' "$DIM" "$scheme" "$RESET"
+}
+
+# fleet open [query] | fleet open <host> <session>
+cmd_open() {
+  local sel
+  if [ $# -ge 2 ]; then sel=$(record_for "$1" "$2" --all) || return 1
+  else sel=$(pick --all "${1:-}") || return 1; fi
+  [ -z "$sel" ] && return 1
+  IFS=$'\t' read -r _ host project name branch session path state worktree <<< "$sel"
+  [ "$branch" = "(detached)" ] && die "$project/$name on $host is detached, nothing to pull"
+
+  local mainrepo dir
+  mainrepo=$(project_repo "$project") || die "no local clone for $project under $FLEET_ROOT"
+  if [ "$worktree" != true ]; then dir="$mainrepo"   # a session in the repo itself
+  else enable_worktrees "$mainrepo"; dir=$(worktree_path "$project" "$name"); fi
+
+  printf '%s  fetching origin for %s%s\n' "$DIM" "$project" "$RESET"
+  git -C "$mainrepo" fetch origin --prune -q
+  git -C "$mainrepo" worktree prune
+  if ! git -C "$mainrepo" rev-parse -q --verify "origin/$branch" >/dev/null; then
+    [ -d "$dir" ] || die "origin/$branch not found: not pushed yet, or deleted after merge"
+    printf '%s  origin/%s not found (not pushed, or deleted after merge), left alone%s\n' \
+      "$YELLOW" "$branch" "$RESET"
+  elif [ "$worktree" != true ]; then
+    # A session in the repo itself: put the local repo on that branch first.
+    # Never touch a checkout with uncommitted changes to tracked files.
+    # Untracked files ride along, as git checkout itself allows (a collision
+    # is git's error, surfaced below). The refusal says what is dirty.
+    local cur dirty; cur=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$cur" != "$branch" ]; then
+      dirty=$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null | head -5)
+      [ -z "$dirty" ] \
+        || die "$dir is on '$cur' with uncommitted changes; commit or stash before switching to '$branch':
+$dirty"
+      if git -C "$dir" show-ref -q --verify "refs/heads/$branch"; then git -C "$dir" checkout -q "$branch"
+      else git -C "$dir" checkout -q --track -b "$branch" "origin/$branch"; fi
+      printf '%s  switched %s from %s to %s%s\n' "$DIM" "$project" "$cur" "$branch" "$RESET"
+    fi
+    if git -C "$dir" merge --ff-only -q "origin/$branch" 2>/dev/null; then
+      printf '%s  %s is at origin/%s (%s)%s\n' "$DIM" "$branch" "$branch" "$(git -C "$dir" log -1 --format=%s 2>/dev/null)" "$RESET"
+    else
+      printf '%s  local %s diverged from origin/%s, left alone%s\n' "$YELLOW" "$branch" "$branch" "$RESET"
+    fi
+  else
+    if [ ! -d "$dir" ]; then
+      mkdir -p "$(dirname "$dir")"
+      if git -C "$mainrepo" show-ref -q --verify "refs/heads/$branch"; then
+        git -C "$mainrepo" worktree add -q "$dir" "$branch"
+      else
+        git -C "$mainrepo" worktree add -q --track -b "$branch" "$dir" "origin/$branch"
+      fi
+    fi
+    git -C "$dir" merge --ff-only -q "origin/$branch" 2>/dev/null \
+      || printf '%s  local worktree diverged from origin/%s, left alone%s\n' "$YELLOW" "$branch" "$RESET"
+  fi
+
+  open_checkout "$dir"
+}
+
+# open_checkout <dir>: hand the checkout to whatever FLEET_OPEN says. Xcode
+# gets the workspace or project (xcode_target) after a background prewarm;
+# a command gets the directory as its argument; an app name goes via open -a.
+open_checkout() {
+  local dir="$1" what="$FLEET_OPEN"
+  if [ "$what" = auto ]; then
+    if command -v xed >/dev/null 2>&1 && [ -n "$(xcode_target "$dir")" ]; then what=xcode; else what=finder; fi
+  fi
+  case "$what" in
+    xcode)  prewarm "$dir"; open_in_xcode "$dir" ;;
+    finder) printf '%s  opening %s in Finder%s\n' "$DIM" "$dir" "$RESET"; open "$dir" ;;
+    *)
+      printf '%s  opening %s with %s%s\n' "$DIM" "$dir" "$what" "$RESET"
+      if command -v "$what" >/dev/null 2>&1; then "$what" "$dir"
+      else open -a "$what" "$dir" 2>/dev/null || die "FLEET_OPEN=$what is neither a command on PATH nor an app; see $FLEET_CONFIG"; fi ;;
+  esac
+}
+
+# Open what Xcode should open: a workspace if there is one, else a project,
+# looking at the repo root and one level down (App/App.xcodeproj,
+# ios/App.xcodeproj); else the folder (a Swift package, or nothing
+# Xcode-shaped). Build products and dependency dirs are skipped.
+xcode_target() {   # $1 dir -> path, or nothing
+  local dir="$1" kind f
+  for kind in xcworkspace xcodeproj; do
+    for f in "$dir"/*."$kind" "$dir"/*/*."$kind"; do
+      [ -e "$f" ] || continue
+      case "$f" in *.xcodeproj/*|*/.build/*|*/Pods/*|*/Carthage/*|*/node_modules/*|*/.claude/*) continue ;; esac
+      printf '%s\n' "$f"; return 0
+    done
+  done
+  return 0
+}
+open_in_xcode() {
+  local dir="$1" target
+  target=$(xcode_target "$dir"); [ -n "$target" ] || target="$dir"
+  printf '%s  opening %s in Xcode%s\n' "$DIM" "$target" "$RESET"
+  # xed can refuse (Xcode busy, or the folder already open as a workspace);
+  # Launch Services then gets a second go before we give up.
+  xed "$target" 2>/dev/null || { printf '%s  xed refused, asking Xcode directly%s\n' "$DIM" "$RESET"; open -a Xcode "$target"; }
+}
+
+# origin's default branch as a remote-tracking ref (origin/main, origin/master).
+default_base() {
+  local ref
+  ref=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) \
+    && { echo "$ref"; return 0; }
+  git -C "$1" rev-parse -q --verify origin/main >/dev/null 2>&1 \
+    && { echo origin/main; return 0; }
+  return 1
+}
+
+cmd_reap() {
+  # A worktree is a candidate when its branch has no commits that are not
+  # already in origin's default branch. That covers merged branches and also
+  # branches nobody has committed to yet, so the prompt says so, and a
+  # worktree with uncommitted changes is never offered: `worktree remove`
+  # is run without --force so git refuses to delete modified or untracked
+  # files even if the dirty check is somehow wrong.
+  local pdir mainrepo mainreal project base dir branch session a
+  for pdir in "$FLEET_ROOT"/*/; do
+    project=$(basename "${pdir%/}")
+    mainrepo=$(project_repo "$project") || continue
+    mainreal=$(realdir "$mainrepo")
+    git -C "$mainrepo" fetch origin --prune -q 2>/dev/null \
+      || printf '%s  %s: fetch failed, using last fetched state%s\n' "$YELLOW" "$project" "$RESET"
+    base=$(default_base "$mainrepo") \
+      || { printf '%s  %s: no origin/main, skipping%s\n' "$YELLOW" "$project" "$RESET"; continue; }
+    git -C "$mainrepo" worktree list --porcelain \
+    | awk "$WORKTREE_AWK" \
+    | while IFS=$'\t' read -r dir branch; do
+        [ "$dir" = "$mainreal" ] && continue          # never the primary clone
+        [ "$branch" = "(detached)" ] && continue
+        git -C "$mainrepo" merge-base --is-ancestor "$branch" "$base" 2>/dev/null || continue
+        session=$(session_name "$project" "$(basename "$dir")")
+        if tmux has-session -t "$session" 2>/dev/null; then continue; fi
+        if [ -d "$dir" ] && [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+          printf '%s  keep %s (%s): uncommitted changes%s\n' "$YELLOW" "$dir" "$branch" "$RESET"
+          continue
+        fi
+        printf 'remove %s (%s, nothing beyond %s)? [y/N] ' "$dir" "$branch" "$base"
+        read -r a </dev/tty
+        case "$a" in
+          y|Y) if git -C "$mainrepo" worktree remove "$dir"; then
+                 git -C "$mainrepo" branch -D "$branch" >/dev/null 2>&1 || true
+                 forget_session "$session"
+               else
+                 printf '%s  left in place%s\n' "$YELLOW" "$RESET"
+               fi ;;
+        esac
+      done
+  done
+  echo "done"
+}
+
+# ---------------------------------------------------------------- doctor
+
+DOCTOR_RC=0
+# ok <msg>; fail <msg> [fix]; check <msg> <fix> <cmd...>. A fix is one line
+# telling the owner what to do, printed under a FAIL only.
+ok()   { printf '  %sok%s    %s\n' "$GREEN" "$RESET" "$1"; }
+fail() {
+  printf '  %sFAIL%s  %s\n' "$RED" "$RESET" "$1"; DOCTOR_RC=1
+  [ -n "${2:-}" ] && printf '        %sfix: %s%s\n' "$DIM" "$2" "$RESET"
+  return 0
+}
+check() {
+  local msg="$1" fix="$2"; shift 2
+  if "$@" >/dev/null 2>&1; then ok "$msg"; else fail "$msg" "$fix"; fi
+}
+
+script_path() { echo "$(fleet_src)/fleet"; }
+script_id()   { shasum "$(script_path)" 2>/dev/null | cut -c1-12; }
+hosts_line()  { local t; for t in $FLEET_HOSTS; do printf ' %s' "$t"; done; }
+
+doctor_local() {
+  local t f n
+  printf '%s%s%s\n' "$BOLD" "$FLEET_SELF" "$RESET"
+  ok "fleet $(script_id) at $(script_path)"
+  check "config $FLEET_CONFIG" \
+        "run 'fleet install' to seed it, then edit it" \
+        test -f "$FLEET_CONFIG"
+  t=$(tailscale_self 2>/dev/null || true)
+  if [ -z "$t" ]; then
+    ok "Tailscale not found; FLEET_SELF=$FLEET_SELF from hostname"
+  elif [ "$t" = "$FLEET_SELF" ]; then
+    ok "FLEET_SELF=$FLEET_SELF matches this Mac's tailnet name"
+  else
+    fail "FLEET_SELF=$FLEET_SELF but this Mac's tailnet name is $t" \
+         "set FLEET_SELF=\"$t\" in $FLEET_CONFIG (or delete the line to auto-detect)"
+  fi
+  check "hosts:$(hosts_line)" \
+        "fleet hosts add <this Mac's ssh alias>   (list is $FLEET_HOSTS_FILE)" \
+        test -n "${FLEET_HOSTS// /}"
+  case " $FLEET_HOSTS " in
+    *" $FLEET_SELF "*) ok "FLEET_SELF=$FLEET_SELF is in the host list" ;;
+    *) fail "FLEET_SELF=$FLEET_SELF is not in the host list" \
+            "set FLEET_SELF in $FLEET_CONFIG to this Mac's ssh alias, and 'fleet hosts add' it if missing" ;;
+  esac
+  if grep -q '^FLEET_HOSTS=' "$FLEET_CONFIG" 2>/dev/null; then
+    fail "FLEET_HOSTS is set in $FLEET_CONFIG and overrides $FLEET_HOSTS_FILE" \
+         "remove that line so this Mac follows the pushed hosts file"
+  fi
+  # shellcheck disable=SC2088  # message text, not a path
+  check "~/bin on your shell's PATH (so plain 'fleet' works)" "fleet install   (adds it to ~/.zprofile)" bin_on_path
+  check "git on PATH" "xcode-select --install" command -v git
+  if command -v gh >/dev/null 2>&1; then
+    check "gh signed in (token readable without the Keychain)" \
+          "gh auth login --insecure-storage   (Keychain tokens are unreadable over ssh)" gh auth status
+  else
+    ok "gh not installed (fine unless agents push to GitHub: brew install gh && gh auth login --insecure-storage)"
+  fi
+  t=$(checkout_dir)
+  if [ ! -e "$t/.git" ]; then
+    fail "no fleet checkout at $t" "fleet install"
+  elif ! git -C "$t" fetch -q origin 2>/dev/null; then
+    fail "could not fetch origin in $t" "network? if the repo is private: gh auth status; gh auth setup-git"
+  else
+    n=$(git -C "$t" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
+    check "checkout $t is current with origin ($n behind)" "fleet update" test "$n" -eq 0
+  fi
+  for t in jq fzf tmux; do
+    check "$t on PATH" "brew install $t   (or: fleet install)" command -v "$t"
+  done
+  check "claude on PATH" \
+        "install Claude Code (curl -fsSL https://claude.ai/install.sh | bash) or add its dir to FLEET_PATH" \
+        command -v claude
+  check "FLEET_ROOT $FLEET_ROOT exists" \
+        "mkdir -p '$FLEET_ROOT', or set FLEET_ROOT in $FLEET_CONFIG" \
+        test -d "$FLEET_ROOT"
+  n=0; for f in "$FLEET_ROOT"/*/main; do [ -e "$f/.git" ] && n=$((n+1)); done
+  check "$n project(s) with a main clone under FLEET_ROOT" \
+        "git clone <repo> '$FLEET_ROOT/<project>/main' for each project (README section 3)" \
+        test "$n" -gt 0
+  if [ -d "$FLEET_STATE" ]; then
+    check "FLEET_STATE $FLEET_STATE writable" "chmod u+w '$FLEET_STATE'" test -w "$FLEET_STATE"
+  else
+    check "FLEET_STATE $FLEET_STATE creatable (hook makes it)" "mkdir -p '$FLEET_STATE'" \
+          test -w "$(dirname "$FLEET_STATE")"
+  fi
+  f="$HOME/.claude/settings.json"
+  t=$(hooks_missing "$f")
+  if [ -z "$t" ]; then ok "Claude Code hooks in $f (all 5 events)"
+  else fail "Claude Code hooks missing in $f for: $t" "fleet install   (merges them in; or README section 5 by hand)"; fi
+  if statusline_missing "$f"; then
+    fail "Claude Code status line in $f does not run fleet statusline (no context, cost or usage limits)" "fleet install   (wraps the current command)"
+  else ok "Claude Code status line runs fleet statusline (context, cost, usage limits)"; fi
+  if [ -f "$FLEET_SIGNERS" ]; then ok "fleet update only accepts commits signed by a key in $FLEET_SIGNERS"
+  else printf '%s  · fleet update runs whatever origin serves; SECURITY.md shows how to require signed commits%s\n' "$DIM" "$RESET"; fi
+  # Per-worktree DerivedData only matters with Xcode; the command line tools alone have no xcodebuild.
+  if xcodebuild -version >/dev/null 2>&1; then
+    f=$(git config --global core.excludesfile 2>/dev/null || true); f="${f/#\~/$HOME}"
+    check "global gitignore excludes .build/ (${f:-unset})" \
+          "git config --global core.excludesfile ~/.gitignore_global && echo .build/ >> ~/.gitignore_global" \
+          grep -qx '.build/' "${f:-/dev/null}"
+    t=$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null || true)
+    check "Xcode DerivedData is workspace-relative .build (got '${t:-default}')" \
+          "Xcode > Settings > Locations > Derived Data: Custom, Relative to Workspace, path .build" \
+          test "$t" = ".build"
+  else
+    printf '%s  · no Xcode: DerivedData checks skipped%s\n' "$DIM" "$RESET"
+  fi
+}
+
+doctor_remote() {
+  local h="$1" out first t
+  printf '%s%s%s\n' "$BOLD" "$h" "$RESET"
+  ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$h" true 2>/dev/null \
+    || { fail "ssh $h unreachable (BatchMode, ${FLEET_SSH_TIMEOUT}s)" \
+              "point the '$h' alias in ~/.ssh/config at its hostname or tailnet name, turn on Remote Login there, and check: ssh -o BatchMode=yes $h true"; return 0; }
+  ok "ssh $h reachable"
+  ssh -o BatchMode=yes "$h" "$(with_path 'command -v fleet')" >/dev/null 2>&1 \
+    || { fail "fleet not found on $h with PATH=$FLEET_PATH" "fleet install $h"; return 0; }
+  out=$(ssh -o BatchMode=yes "$h" "$(with_path 'fleet doctor --local')" 2>/dev/null || true)
+  first=$(printf '%s\n' "$out" | sed -n 1p)
+  if [ "$first" = "$h" ]; then ok "remote FLEET_SELF=$first"
+  else fail "remote FLEET_SELF='$first' but its ssh alias here is '$h'" \
+            "on $h set FLEET_SELF=\"$h\" in its config, or rename the ssh alias to match"; fi
+  # The remote's own checks, then two comparisons against this machine.
+  printf '%s\n' "$out" | sed '1d'
+  case "$out" in *FAIL*) DOCTOR_RC=1 ;; esac
+  t=$(printf '%s\n' "$out" | sed -n 's/^  ok    fleet \([0-9a-f]*\) at .*/\1/p' | head -1)
+  if [ -n "$t" ] && [ "$t" != "$(script_id)" ]; then
+    fail "fleet on $h ($t) differs from this Mac's ($(script_id))" "fleet update $h"
+  fi
+  t=$(printf '%s\n' "$out" | sed -n 's/^  [a-zA-Z]*  *hosts:\(.*\)$/\1/p' | head -1)
+  if [ "$t" != "$(hosts_line)" ]; then
+    fail "host list on $h is [${t# }] but here it is [$(hosts_line | sed 's/^ //')]" "fleet hosts push $h"
+  fi
+  if infocmp -x xterm-ghostty >/dev/null 2>&1; then
+    check "xterm-ghostty terminfo on $h (Ghostty -> ssh -> tmux)" \
+          "fleet update $h   (or: infocmp -x xterm-ghostty | ssh $h tic -x -)" \
+          ssh -o BatchMode=yes "$h" 'infocmp xterm-ghostty'
+  fi
+  if ssh -o BatchMode=yes "$h" "$(with_path 'fleet status --json')" 2>/dev/null | jq -e 'type=="array"' >/dev/null 2>&1
+  then ok "fleet status --json over ssh returns JSON"
+  else fail "fleet status --json over ssh did not return JSON" \
+            "run: ssh $h '\$HOME/bin/fleet status --json' and read the error"; fi
+}
+
+cmd_doctor() {
+  local h
+  if [ "${1:-}" = "--local" ]; then doctor_local; exit "$DOCTOR_RC"; fi
+  # shellcheck disable=SC2086  # FLEET_HOSTS is a space-separated list
+  [ $# -gt 0 ] || set -- $FLEET_HOSTS
+  [ $# -gt 0 ] || set -- "$FLEET_SELF"   # no hosts yet: check this machine, which reports that
+  for h in "$@"; do
+    if [ "$h" = "$FLEET_SELF" ]; then doctor_local; else doctor_remote "$h"; fi
+    echo
+  done
+  exit "$DOCTOR_RC"
+}
+
+# ---------------------------------------------------------------- host info
+#
+# What kind of machine each host is, for choosing where to start a session:
+# chip, cores, memory, laptop (may sleep) or desktop, and how many fleet
+# sessions it is already running. Each host reports its own via
+# `fleet hosts --info-local`; the picker ranks desktops first, then cores.
+
+hostinfo_local() {
+  local model name chip cores pcores ecores mem laptop=false n=0 f
+  model=$(sysctl -n hw.model 2>/dev/null || echo unknown)
+  # "Mac mini", "MacBook Pro"...; the identifier alone (Mac15,8) no longer says. Fast (~0.1s).
+  name=$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Model Name/ { print $2; exit }')
+  chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)
+  cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 0)
+  pcores=$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || echo "$cores")   # performance cores
+  ecores=$(sysctl -n hw.perflevel1.logicalcpu 2>/dev/null || echo 0)          # efficiency cores
+  mem=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1073741824 ))
+  pmset -g batt 2>/dev/null | grep -q InternalBattery && laptop=true
+  for f in "$FLEET_SESSIONS"/*; do
+    [ -e "$f" ] && tmux has-session -t "$(basename "$f")" 2>/dev/null && n=$((n + 1))
+  done
+  jq -nc --arg host "$FLEET_SELF" --arg model "$model" --arg model_name "$name" --arg chip "$chip" \
+     --argjson cores "$cores" --argjson pcores "$pcores" --argjson ecores "$ecores" \
+     --argjson mem_gb "$mem" --argjson laptop "$laptop" --argjson sessions "$n" \
+     '$ARGS.named'
+}
+
+# hostinfo_into <dir>: one <host>.json per host (fan-out, spinner as for status).
+hostinfo_into() {
+  local h pids="" spin=""
+  [ -n "${FLEET_HOSTS// /}" ] || die "no hosts yet: fleet hosts add   (see fleet doctor)"
+  for h in $FLEET_HOSTS; do
+    host_fetch "$h" "$1" hostinfo_local "fleet hosts --info-local" "" '{}' & pids="$pids $!"
+  done
+  if [ -t 2 ] && [ -z "${FLEET_NO_SPINNER:-}" ]; then spinner "$1" & spin=$!; fi
+  # shellcheck disable=SC2086  # pids is a space-separated list of job ids
+  wait $pids
+  if [ -n "$spin" ]; then { kill "$spin" && wait "$spin"; } >/dev/null 2>&1 || true; printf '\r\033[K' >&2; fi
+}
+
+load_label() {   # 0 -> idle, 1 -> "1 session", n -> "n sessions"
+  case "$1" in 0) echo idle ;; 1) echo "1 session" ;; *) echo "$1 sessions" ;; esac
+}
+
+# hostinfo_rows <dir>: "<display>\t<host>" lines, best candidate first:
+# desktops before laptops, then a power score from the chip name (generation
+# M1..M4 and tier base/Pro/Max/Ultra; A-series thin clients score lowest),
+# then fewer sessions. Cores show as performance+efficiency. First row is
+# marked as the recommendation.
+hostinfo_rows() {
+  cat "$1"/*.json 2>/dev/null \
+  | jq -r 'select(type=="object" and .host != null)
+      | .gen  = ((.chip | capture("M(?<g>[0-9]+)") | .g | tonumber) // 0)
+      | .tier = (if (.chip|test("Ultra")) then 3 elif (.chip|test("Max")) then 2 elif (.chip|test("Pro")) then 1 else 0 end)
+      | .score = (.gen * 2 + .tier)
+      | .bar = ((1 + ((.score * 4 / 11) | round)) as $n | ("▰" * $n) + ("▱" * (5 - $n)))
+      | [(if .laptop then 1 else 0 end), (-.score), .sessions,
+         .host, .chip, "\(.pcores // .cores)P+\(.ecores // 0)E", (.mem_gb|tostring),
+         (if .laptop then "laptop, may sleep" else "desktop" end), (.sessions|tostring), .bar] | @tsv' \
+  | sort -t "$(printf '\t')" -k1,1n -k2,2n -k3,3n | cut -f4- \
+  | { local n=0 host chip cores mem kind sessions bar mark
+      while IFS=$'\t' read -r host chip cores mem kind sessions bar; do
+        n=$((n + 1)); if [ "$n" -eq 1 ]; then mark="${GREEN}★${RESET}"; else mark=" "; fi
+        # filled part green, empty part dim (colours are empty strings when not a tty)
+        bar="${GREEN}${bar%%▱*}${DIM}${bar#"${bar%%▱*}"}${RESET}"
+        printf '%s %s  %s  %s  %s  %s  %s  %s\t%s\n' "$mark" "$(pad "$host" 10)" "$(pad "$chip" 14)" "$bar" \
+          "$(pad "$cores" 7)" "$(pad "${mem}GB" 6)" "$(pad "$kind" 18)" \
+          "$(pad "$(load_label "$sessions")" 12)" "$host"
+      done; }
+}
+
+# pick_host: choose a host to start a session on. Prints the host.
+pick_host() {
+  need fzf
+  local tmp sel
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  hostinfo_into "$tmp"
+  sel=$(hostinfo_rows "$tmp" \
+    | fzf --ansi --delimiter='[ ]{2,}|\t' --nth=1 --with-nth=1..8 --height=40% --reverse \
+          --header="  $(pad host 10)  $(pad chip 14)  power  $(pad cores 7)  $(pad mem 6)  $(pad kind 18)  $(pad load 12)  ★ = recommended$(down_hosts "$tmp" | sed 's/^ / \/ not answering:/')") || return 1
+  [ -n "$sel" ] || return 1
+  printf '%s\n' "${sel##*	}"
+}
+
+cmd_hosts_info() {   # fleet hosts info [--json]: the same table, non-interactive
+  local tmp f
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  hostinfo_into "$tmp"
+  if [ "${1:-}" = "--json" ]; then
+    { for f in "$tmp"/*.down; do [ -e "$f" ] && jq -nc --arg host "$(basename "$f" .down)" --arg reason "$(cat "$f")" '{host: $host, reason: $reason}'; done; true; } > "$tmp/.down.jsonl"
+    jq -sc --slurpfile down <(jq -s . "$tmp/.down.jsonl") --arg me "$FLEET_SELF" '
+      { hosts: [ .[] | select(type == "object" and .host != null) | .self = (.host == $me)
+                 | .score = (((.chip | capture("M(?<g>[0-9]+)") | .g | tonumber) // 0) * 2
+                             + (if (.chip|test("Ultra")) then 3 elif (.chip|test("Max")) then 2 elif (.chip|test("Pro")) then 1 else 0 end)) ]
+              | sort_by((if .laptop then 1 else 0 end), -.score, .sessions),
+        down: ($down[0] // []) }' "$tmp"/*.json
+    return 0
+  fi
+  printf '  %s  %s  %s  %s  %s  %s  %s\n' "$(pad host 10)" "$(pad chip 14)" "power" "$(pad cores 7)" "$(pad mem 6)" "$(pad kind 18)" "load"
+  hostinfo_rows "$tmp" | cut -f1
+  [ -n "$(down_hosts "$tmp")" ] && printf '%snot answering:\n%s%s\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"
+  return 0
+}
+
+# ---------------------------------------------------------------- hosts
+#
+# The host list is ~/.config/fleet/hosts on every machine, one ssh alias per
+# line. It is never in git. `fleet hosts add|rm` edits it here and pushes the
+# file to every reachable host over ssh; `fleet install|update <host>` pushes
+# it too, which is how a machine that was off catches up. `fleet doctor`
+# reports any host whose list differs from this one.
+
+hosts_push() {   # $1 host; sends this machine's hosts file (and allowed_signers, if any) to it
+  ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$1" \
+    'mkdir -p "$HOME/.config/fleet" && cat > "$HOME/.config/fleet/hosts"' < "$FLEET_HOSTS_FILE" || return 1
+  [ -f "$FLEET_SIGNERS" ] || return 0
+  ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$1" \
+    'cat > "$HOME/.config/fleet/allowed_signers"' < "$FLEET_SIGNERS"
+}
+
+cmd_hosts() {
+  local op="${1:-}" h="${2:-}" t tmp
+  case "$op" in
+    info) cmd_hosts_info "${2:-}"; return 0 ;;
+    --info-local) hostinfo_local; return 0 ;;
+    "")
+      for t in $FLEET_HOSTS; do printf '%s\n' "$t"; done
+      if grep -q '^FLEET_HOSTS=' "$FLEET_CONFIG" 2>/dev/null; then
+        printf '%s(FLEET_HOSTS override in %s)%s\n' "$DIM" "$FLEET_CONFIG" "$RESET"
+      else
+        printf '%s(%s)%s\n' "$DIM" "$FLEET_HOSTS_FILE" "$RESET"
+      fi ;;
+    add|rm)
+      mkdir -p "$(dirname "$FLEET_HOSTS_FILE")"
+      [ -f "$FLEET_HOSTS_FILE" ] || : > "$FLEET_HOSTS_FILE"
+      if [ "$op" = add ] && [ -z "$h" ]; then
+        # No name: every Mac on the tailnet, as Tailscale sees it.
+        tmp=$(tailscale_macs 2>/dev/null || true)
+        [ -n "$tmp" ] || die "usage: fleet hosts add <alias>   (no argument needs Tailscale running)"
+        for t in $tmp; do
+          if grep -qx "$t" "$FLEET_HOSTS_FILE"; then ok "$t already listed"
+          else printf '%s\n' "$t" >> "$FLEET_HOSTS_FILE"; ok "added $t (from tailnet)"; fi
+        done
+        h=""
+      elif [ "$op" = add ]; then
+        valid_host "$h" || die "'$h' is not a host name (letters, digits, . _ - only; it is passed straight to ssh)"
+        grep -qx "$h" "$FLEET_HOSTS_FILE" && die "$h is already listed"
+        printf '%s\n' "$h" >> "$FLEET_HOSTS_FILE"
+      else
+        [ -n "$h" ] || die "usage: fleet hosts rm <alias>"
+        grep -qx "$h" "$FLEET_HOSTS_FILE" || die "$h is not listed"
+        tmp=$(mktemp); grep -vx "$h" "$FLEET_HOSTS_FILE" > "$tmp" || true; mv "$tmp" "$FLEET_HOSTS_FILE"
+      fi
+      FLEET_HOSTS=$(sed 's/#.*//' "$FLEET_HOSTS_FILE" | tr '\n' ' ')
+      if grep -q '^FLEET_HOSTS=' "$FLEET_CONFIG" 2>/dev/null; then
+        printf '%s  note: FLEET_HOSTS in %s overrides the hosts file on this Mac%s\n' "$YELLOW" "$FLEET_CONFIG" "$RESET"
+      fi
+      if [ "$op" = add ] && [ -n "$h" ] && [ "$h" != "$FLEET_SELF" ]; then
+        printf '%s  if %s has no fleet yet: fleet install %s%s\n' "$DIM" "$h" "$h" "$RESET"
+      fi
+      cmd_hosts push ;;
+    push)
+      shift
+      # shellcheck disable=SC2086  # FLEET_HOSTS is a space-separated list
+      [ $# -gt 0 ] || set -- $FLEET_HOSTS
+      for t in "$@"; do
+        [ "$t" = "$FLEET_SELF" ] && continue
+        if hosts_push "$t" 2>/dev/null; then ok "hosts -> $t"
+        else fail "hosts -> $t" "when $t is back: fleet hosts push $t   (fleet update $t does it too)"; fi
+      done
+      exit "$DOCTOR_RC" ;;
+    *) die "usage: fleet hosts [add [alias] | rm <alias> | push [host...] | info]" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- keys
+#
+# The iOS app reaches every Mac over ssh with its own Ed25519 key. `fleet keys
+# add "<openssh public key>"` puts that key in ~/.ssh/authorized_keys here and
+# on every reachable host (idempotent); `rm <comment>` takes every line whose
+# comment is that word back out; no argument lists the fleet-tagged keys here.
+# --local touches only this Mac. Keys are validated to one line of the form
+# "<type> <base64> [comment]" so nothing else can land in authorized_keys.
+
+valid_pubkey() {
+  case "$1" in
+    *[!A-Za-z0-9+/=@.:_' '-]*|"") return 1 ;;      # one line: letters, base64 and comment characters only
+    "ssh-ed25519 "*|"ecdsa-sha2-nistp256 "*|"ecdsa-sha2-nistp384 "*|"ssh-rsa "*|"sk-ssh-ed25519@openssh.com "*) ;;
+    *) return 1 ;;
+  esac
+  [ "$(printf '%s' "$1" | awk '{print NF}')" -le 3 ]
+}
+
+# keys_script add|rm <key or comment>: the sh snippet run here and on each host
+keys_script() {
+  local q; q=$(shq "$2")
+  # shellcheck disable=SC2016  # $HOME, $f, $t and awk's $3 are for the shell that runs the snippet
+  if [ "$1" = add ]; then
+    printf 'umask 077; mkdir -p "$HOME/.ssh"; touch "$HOME/.ssh/authorized_keys"; grep -qxF %s "$HOME/.ssh/authorized_keys" || printf "%%s\\n" %s >> "$HOME/.ssh/authorized_keys"' "$q" "$q"
+  else
+    # shellcheck disable=SC2016  # same: expanded on the target machine
+    printf 'f="$HOME/.ssh/authorized_keys"; [ -f "$f" ] || exit 0; t=$(mktemp); awk -v c=%s '"'"'$3 != c'"'"' "$f" > "$t" && cat "$t" > "$f"; rm -f "$t"' "$q"
+  fi
+}
+
+cmd_keys() {
+  local op="${1:-}" arg="${2:-}" local_only=0 h script a
+  for a in "$@"; do [ "$a" = "--local" ] && local_only=1; done
+  case "$op" in
+    ""|--local)
+      grep -h "fleet-" "$HOME/.ssh/authorized_keys" 2>/dev/null | awk '{print $3 "  (" $1 ")"}'
+      return 0 ;;
+    add)
+      valid_pubkey "$arg" || die "usage: fleet keys add \"ssh-ed25519 AAAA... comment\"   (one OpenSSH public key line)" ;;
+    rm)
+      case "$arg" in ""|*[!A-Za-z0-9@.:_-]*) die "usage: fleet keys rm <comment>" ;; esac ;;
+    *) die "usage: fleet keys [add \"<public key>\" | rm <comment>] [--local]" ;;
+  esac
+  script=$(keys_script "$op" "$arg")
+  local label; if [ "$op" = add ]; then label="${arg##* }"; else label="$arg"; fi   # the key's comment
+  sh -c "$script" && ok "$op $label on $FLEET_SELF"
+  [ "$local_only" = 1 ] && exit "$DOCTOR_RC"
+  for h in $FLEET_HOSTS; do
+    [ "$h" = "$FLEET_SELF" ] && continue
+    if ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$h" "$script" 2>/dev/null; then ok "$op $label on $h"
+    else fail "$op $label on $h" "when $h is back: fleet keys $op \"$arg\""; fi
+  done
+  exit "$DOCTOR_RC"
+}
+
+# ---------------------------------------------------------------- install
+#
+# Every Mac clones the repo itself, with gh when it is installed (private
+# fork, or its credentials for plain git), else plain git over https:
+# `install` clones FLEET_REPO into FLEET_CHECKOUT if it is not there, pulls
+# it if it is, and links ~/bin/fleet to it. `update` is the same
+# command. On a remote host the same thing runs over ssh, and the host list
+# is pushed first. Config and hosts stay in ~/.config/fleet, never in git.
+
+write_example_config() {   # $1 path
+  {
+    cat <<'EOF'
+# fleet per-machine settings. The host list is NOT here: it is the `hosts`
+# file next to this one, kept in sync by `fleet hosts add|rm` and
+# `fleet update`. Bash syntax; sourced by every fleet command.
+
+EOF
+    printf 'FLEET_SELF="%s"%s\n' "$FLEET_SELF" \
+      "                     # this Mac's tailnet name (what others ssh to); detected at install"
+    cat <<'EOF'
+FLEET_ROOT="$HOME/code"                 # your clones live here, one folder per project
+# FLEET_OPEN=auto                       # what `fleet open` opens the checkout in: auto (Xcode when the
+#                                       # checkout has a project, else Finder), xcode, finder, or a
+#                                       # command or app name given the directory: code, cursor, zed...
+FLEET_SIM="iPhone 17 Pro"               # Xcode prewarm destination
+# FLEET_CHECKOUT="$HOME/Developer/fleet"  # where the fleet repo is cloned
+# FLEET_SSH_TIMEOUT=3                   # ssh connect timeout
+# FLEET_CMD_TIMEOUT=20                  # whole remote `fleet status`
+# FLEET_EXIT_TIMEOUT=10                 # fleet kill: seconds the agent gets to /exit before tmux is killed
+# FLEET_TERM=inline                    # inline (attach in this terminal), or ghostty | terminal | iterm:
+#                                      # raise that app's window for the session, else open a new one
+# FLEET_CLAUDE_ARGS="--permission-mode auto --remote-control"   # flags fleet new passes to claude
+# FLEET_PATH='$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin'
+EOF
+  } > "$1"
+}
+
+# The checkout to install from: the one this script runs out of if that is a
+# git repo (dev machine), else FLEET_CHECKOUT.
+checkout_dir() {
+  local s; s=$(fleet_src)
+  if [ -e "$s/.git" ] && [ -f "$s/fleet" ]; then echo "$s"; else echo "$FLEET_CHECKOUT"; fi
+}
+
+# The Claude Code hooks that feed `fleet hook`. One group per event; the
+# Notification group only fires for prompts that need a person.
+hook_events() { printf '%s\n' UserPromptSubmit:running PostToolUse:running Notification:blocked Stop:done SessionEnd:idle; }
+
+# install_hooks <settings.json>: merge the five entries in, idempotently
+# (an event that already runs `fleet hook` is left alone), keeping everything
+# else in the file. A backup is written beside it the first time.
+install_hooks() {
+  local f="$1" ev state pair tmp
+  mkdir -p "$(dirname "$f")"
+  [ -s "$f" ] || echo '{}' > "$f"
+  jq -e . "$f" >/dev/null 2>&1 || { fail "$f is not valid JSON" "fix it by hand, then: fleet install"; return 0; }
+  [ -e "$f.fleet-backup" ] || cp "$f" "$f.fleet-backup"
+  for pair in $(hook_events); do
+    ev=${pair%%:*}; state=${pair#*:}
+    if jq -e --arg ev "$ev" '.hooks[$ev]? // [] | any(.hooks[]?.command? // "" | test("fleet hook"))' "$f" >/dev/null 2>&1; then
+      continue
+    fi
+    tmp=$(mktemp)
+    if [ "$ev" = Notification ]; then
+      jq --arg ev "$ev" --arg cmd "\$HOME/bin/fleet hook $state" \
+         '.hooks[$ev] = ((.hooks[$ev] // []) + [{matcher: "permission_prompt|idle_prompt", hooks: [{type: "command", command: $cmd}]}])' "$f" > "$tmp"
+    else
+      jq --arg ev "$ev" --arg cmd "\$HOME/bin/fleet hook $state" \
+         '.hooks[$ev] = ((.hooks[$ev] // []) + [{hooks: [{type: "command", command: $cmd}]}])' "$f" > "$tmp"
+    fi
+    mv "$tmp" "$f"
+  done
+  ok "Claude Code hooks in $f (backup: $(basename "$f").fleet-backup)"
+  install_statusline "$f"
+}
+
+# install_statusline <settings.json>: make Claude Code's status line command
+# `fleet statusline`, chaining to whatever command was there (quoted for sh),
+# so fleet learns context use, cost and rate limits. Idempotent.
+install_statusline() {
+  local f="$1" old q cmd tmp
+  statusline_missing "$f" || return 0
+  old=$(jq -r '.statusLine.command // ""' "$f" 2>/dev/null || true)
+  if [ -n "$old" ]; then
+    q=$(printf '%s' "$old" | sed "s/'/'\\\\''/g")
+    cmd="\$HOME/bin/fleet statusline -- '$q'"
+  else
+    cmd="\$HOME/bin/fleet statusline"
+  fi
+  tmp=$(mktemp)
+  jq --arg cmd "$cmd" '.statusLine = {type: "command", command: $cmd}' "$f" > "$tmp" && mv "$tmp" "$f"
+  if [ -n "$old" ]; then ok "status line in $f now runs fleet statusline, then: $old"
+  else ok "status line in $f runs fleet statusline"; fi
+}
+# statusline_missing <settings.json>: true when the status line does not run fleet
+statusline_missing() {
+  ! jq -e '.statusLine.command? // "" | test("fleet statusline")' "$1" >/dev/null 2>&1
+}
+
+# hooks_missing <settings.json>: events that do not yet run `fleet hook`, space separated
+hooks_missing() {
+  local pair ev out=""
+  for pair in $(hook_events); do
+    ev=${pair%%:*}
+    jq -e --arg ev "$ev" '.hooks[$ev]? // [] | any(.hooks[]?.command? // "" | test("fleet hook"))' "$1" >/dev/null 2>&1 || out="$out $ev"
+  done
+  printf '%s' "${out# }"
+}
+
+# After the repo moves (owner or name), origin still says the old address.
+# GitHub redirects for a while; make it permanent by rewriting a github.com
+# origin to FLEET_REPO, keeping the https or ssh form it already uses.
+repoint_origin() {   # $1 checkout dir
+  local co="$1" url new
+  url=$(git -C "$co" remote get-url origin 2>/dev/null) || return 0
+  case "$url" in
+    https://github.com/*) new="https://github.com/$FLEET_REPO.git" ;;
+    git@github.com:*)     new="git@github.com:$FLEET_REPO.git" ;;
+    *) return 0 ;;
+  esac
+  [ "$url" = "$new" ] || [ "${url%.git}" = "${new%.git}" ] && return 0
+  git -C "$co" remote set-url origin "$new" && ok "origin -> $new (was $url)"
+}
+
+# Bring the checkout up to date with origin, out loud: what is coming is
+# listed before it lands, nothing but a fast-forward is accepted, and when
+# ~/.config/fleet/allowed_signers exists the new tip must carry an ssh
+# signature from one of those keys or nothing moves. This is the only place
+# fleet ever changes its own code (SECURITY.md).
+update_checkout() {   # $1 checkout dir; ok/fail lines, status via DOCTOR_RC
+  local co="$1" up n
+  git -C "$co" fetch -q origin 2>/dev/null || { fail "git fetch failed in $co" "cd '$co' && git fetch origin"; return 0; }
+  up=$(git -C "$co" rev-parse -q --verify --abbrev-ref '@{u}' 2>/dev/null) || { fail "$co has no upstream branch" "cd '$co' && git branch -u origin/main"; return 0; }
+  n=$(git -C "$co" rev-list --count "HEAD..$up" 2>/dev/null || echo 0)
+  if [ "$n" = 0 ]; then ok "$co is up to date ($(git -C "$co" rev-parse --short HEAD))"; return 0; fi
+  if [ -f "$FLEET_SIGNERS" ]; then
+    if git -C "$co" -c gpg.ssh.allowedSignersFile="$FLEET_SIGNERS" verify-commit "$up" >/dev/null 2>&1; then
+      ok "$up is signed by a key in $FLEET_SIGNERS"
+    else
+      fail "$up is NOT signed by a key in $FLEET_SIGNERS; not updating" \
+           "sign your commits (SECURITY.md), or remove that file to stop checking"
+      return 0
+    fi
+  fi
+  git -C "$co" log --format='  %h %s' "HEAD..$up" | head -20
+  if git -C "$co" merge -q --ff-only "$up" 2>/dev/null; then ok "updated $co: $n new commit(s)"
+  else fail "fast-forward to $up failed in $co" "cd '$co' && git status   (local changes?)"; fi
+}
+
+# Clone FLEET_REPO into $1: gh when installed (it has the credentials for a
+# private repo), else plain git over https.
+clone_repo() {
+  if command -v gh >/dev/null 2>&1; then gh repo clone "$FLEET_REPO" "$1" -- -q 2>/dev/null
+  else git clone -q "https://github.com/$FLEET_REPO" "$1" 2>/dev/null; fi
+}
+
+install_local() {
+  local t co
+  [ -n "${FLEET_UPDATED:-}${FLEET_REEXEC:-}" ] || printf '%s%s%s\n' "$BOLD" "$FLEET_SELF" "$RESET"   # else cmd_install printed it
+  co=$(checkout_dir)
+  gh auth setup-git >/dev/null 2>&1 || true    # let plain git pull use gh's credentials
+  if [ -e "$co/.git" ]; then
+    if [ -n "${FLEET_REEXEC:-}" ]; then
+      ok "restarted on the new version"
+    elif [ -n "${FLEET_UPDATED:-}" ]; then
+      :   # cmd_install already fetched and reported
+    elif git -C "$co" remote get-url origin >/dev/null 2>&1; then
+      repoint_origin "$co"
+      update_checkout "$co"
+    else
+      ok "$co has no origin, left as is"
+    fi
+  else
+    if clone_repo "$co"; then ok "cloned $FLEET_REPO to $co"
+    else fail "clone of $FLEET_REPO failed" "network? if the repo is private: gh auth status"; return 0; fi
+  fi
+  mkdir -p "$HOME/bin"
+  chmod +x "$co/fleet" 2>/dev/null || true
+  check "$HOME/bin/fleet -> $co/fleet" "ln -sfn '$co/fleet' '$HOME/bin/fleet'" ln -sfn "$co/fleet" "$HOME/bin/fleet"
+  # shellcheck disable=SC2088,SC2016  # messages, and a literal line for .zprofile
+  if bin_on_path; then
+    ok "~/bin is on PATH"
+  elif printf '\n# fleet: put ~/bin on PATH\nexport PATH="$HOME/bin:$PATH"\n' >> "$HOME/.zprofile" 2>/dev/null; then
+    ok "added ~/bin to PATH in ~/.zprofile (open a new shell, then plain 'fleet' works)"
+  else
+    fail "could not add ~/bin to PATH" "add: export PATH=\"\$HOME/bin:\$PATH\" to ~/.zprofile"
+  fi
+  mkdir -p "$(dirname "$FLEET_CONFIG")"
+  if [ -f "$FLEET_CONFIG" ]; then ok "config $FLEET_CONFIG (FLEET_SELF=$FLEET_SELF)"
+  else
+    check "wrote $FLEET_CONFIG with FLEET_SELF=$FLEET_SELF$(tailscale_self >/dev/null 2>&1 && echo ' (from Tailscale)' || echo ' (from hostname; no Tailscale)'); check FLEET_ROOT" \
+          "fleet install again" write_example_config "$FLEET_CONFIG"
+  fi
+  if [ ! -f "$FLEET_HOSTS_FILE" ]; then
+    printf '# one tailnet name / ssh alias per line; edit with: fleet hosts add|rm <alias>\n' > "$FLEET_HOSTS_FILE"
+  fi
+  if grep -qx "$FLEET_SELF" "$FLEET_HOSTS_FILE"; then ok "hosts:$(hosts_line)"
+  else
+    printf '%s\n' "$FLEET_SELF" >> "$FLEET_HOSTS_FILE"
+    FLEET_HOSTS=$(sed 's/#.*//' "$FLEET_HOSTS_FILE" | tr '\n' ' ')
+    ok "added $FLEET_SELF to $FLEET_HOSTS_FILE; add the other Macs with: fleet hosts add   (no argument = every Mac on the tailnet)"
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    for t in jq fzf tmux; do
+      if command -v "$t" >/dev/null 2>&1; then ok "$t present"
+      else check "$t installed via brew" "brew install $t" brew install -q "$t"; fi
+    done
+  else
+    fail "Homebrew not found" "install it from https://brew.sh, or install jq fzf tmux by hand"
+  fi
+  check "claude on PATH" \
+        "install Claude Code (curl -fsSL https://claude.ai/install.sh | bash) or add its dir to FLEET_PATH" \
+        command -v claude
+  install_hooks "$HOME/.claude/settings.json"
+  printf '  %snext: fleet doctor%s\n' "$DIM" "$RESET"
+}
+
+install_remote() {
+  local h="$1" cmd
+  printf '%s%s%s\n' "$BOLD" "$h" "$RESET"
+  ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" "$h" true 2>/dev/null \
+    || { fail "ssh $h unreachable (BatchMode, ${FLEET_SSH_TIMEOUT}s)" \
+              "point the '$h' alias in ~/.ssh/config at its hostname or tailnet name, turn on Remote Login there, and check: ssh -o BatchMode=yes $h true"; return 0; }
+  if [ -f "$FLEET_HOSTS_FILE" ]; then
+    if hosts_push "$h" 2>/dev/null; then ok "hosts -> $h"; else fail "hosts -> $h" "fleet hosts push $h"; fi
+  fi
+  # Ghostty's terminfo, so `ssh -t host tmux` from a Ghostty window works there.
+  if infocmp -x xterm-ghostty >/dev/null 2>&1; then
+    if infocmp -x xterm-ghostty | ssh -o BatchMode=yes "$h" 'tic -x - 2>/dev/null' 2>/dev/null
+    then ok "xterm-ghostty terminfo -> $h"
+    else fail "xterm-ghostty terminfo -> $h" "infocmp -x xterm-ghostty | ssh $h tic -x -"; fi
+  fi
+  # gh is optional: the bootstrap uses it when it is there, else plain git.
+  # But a gh whose token sits in the Keychain is worse than none over ssh.
+  if ssh -o BatchMode=yes "$h" "$(with_path 'command -v gh')" >/dev/null 2>&1; then
+    if ssh -o BatchMode=yes "$h" "$(with_path 'gh auth status')" >/dev/null 2>&1; then ok "gh signed in on $h"
+    else
+      fail "gh on $h is not usable over ssh (not signed in, or its token is in the macOS Keychain, which ssh logins cannot unlock)" \
+           "on $h, at its keyboard: gh auth logout && gh auth login --insecure-storage   (then: fleet install $h)"; return 0
+    fi
+  fi
+  # If fleet is already there, its own install pulls its own checkout.
+  # Otherwise bootstrap into the default checkout path. $HOME is the
+  # remote's; the repo name is this machine's FLEET_REPO.
+  # shellcheck disable=SC2016  # $HOME is for the remote shell to expand
+  cmd='if command -v fleet >/dev/null 2>&1; then fleet install --local; else { if command -v gh >/dev/null 2>&1; then gh repo clone '"'$FLEET_REPO'"' "$HOME/Developer/fleet" -- -q; else git clone -q '"'https://github.com/$FLEET_REPO'"' "$HOME/Developer/fleet"; fi; } && "$HOME/Developer/fleet/fleet" install --local; fi'
+  ssh -o BatchMode=yes "$h" "$(with_path "$cmd")" 2>&1 | sed '1d' || DOCTOR_RC=1
+}
+
+cmd_install() {
+  local h co before after
+  # Pull first and, if that changed this script, restart on the new version:
+  # otherwise the old code keeps running and misses whatever the pull added.
+  co=$(checkout_dir)
+  if [ -z "${FLEET_REEXEC:-}" ] && [ -e "$co/.git" ] \
+     && git -C "$co" remote get-url origin >/dev/null 2>&1; then
+    gh auth setup-git >/dev/null 2>&1 || true    # let plain git pull use gh's credentials
+    printf '%s%s%s\n' "$BOLD" "$FLEET_SELF" "$RESET"    # header first: install_remote drops line 1 as the remote's header
+    before=$(shasum "$co/fleet" 2>/dev/null || true)
+    repoint_origin "$co"
+    update_checkout "$co"; export FLEET_UPDATED=1    # out loud, once; install_local skips its own
+    after=$(shasum "$co/fleet" 2>/dev/null || true)
+    if [ "$before" != "$after" ]; then
+      FLEET_REEXEC=1 exec /usr/bin/env bash "$co/fleet" install "$@"
+    fi
+  fi
+  if [ "${1:-}" = "--local" ]; then install_local; exit "$DOCTOR_RC"; fi
+  [ $# -gt 0 ] || set -- "$FLEET_SELF"
+  # shellcheck disable=SC2086  # FLEET_HOSTS is a space-separated list
+  [ "$1" = "all" ] && set -- $FLEET_HOSTS
+  [ $# -gt 0 ] || die "no hosts listed yet: fleet hosts add <alias>"
+  for h in "$@"; do
+    if [ "$h" = "$FLEET_SELF" ]; then install_local; else install_remote "$h"; fi
+    echo
+  done
+  exit "$DOCTOR_RC"
+}
+
+# ---------------------------------------------------------------- hook
+
+cmd_hook() {
+  # Called by Claude Code hooks: `fleet hook running|blocked|done|idle`.
+  # Keyed by the tmux session the agent runs in; outside tmux it is "detached".
+  # Claude Code passes a JSON event on stdin. Kept from it, beyond the state:
+  #   session_id  what claude.ai/code/<id> and the Claude apps address
+  #   prompt      UserPromptSubmit's text: what the agent is working on
+  #   note        Notification's message (or its type): what it is asking for
+  #   said        Stop's last_assistant_message: what it said when it finished
+  # Each survives events that lack it, except that running clears note and
+  # said, and done clears note. Never block on stdin.
+  local state="${1:-idle}" session input="" line old='{}' f
+  session=$(tmux display-message -p '#S' 2>/dev/null || echo detached)
+  if [ ! -t 0 ]; then
+    # `|| [ -n "$line" ]`: a last line with no newline still counts (read returns 1 for it)
+    while IFS= read -r -t 1 line || [ -n "$line" ]; do input="$input$line"; done
+  fi
+  printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1 || input='{}'
+  mkdir -p "$FLEET_STATE"
+  f="$FLEET_STATE/$session.json"
+  if [ -f "$f" ] && jq -e 'type == "object"' "$f" >/dev/null 2>&1; then old=$(cat "$f"); fi
+  printf '%s' "$input" | jq -c --arg state "$state" --argjson ts "$(date +%s)" --argjson old "$old" '
+    def clip($n): gsub("\\*\\*|`"; "") | gsub("[\\p{Cc}]"; " ") | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "") | if length > $n then .[:$n] + "…" else . end;   # plain text: no bold, code marks or control characters (terminal escapes)
+    # A prompt that is a tag is Claude Code talking to itself (a task
+    # notification), not the owner: never the answer to "working on".
+    def owners: if type == "string" and (test("^\\s*<[a-z-]+[ >]") | not) then . else "" end;
+    ($old | if type == "object" then . else {} end) as $o
+    | ((.user_input // .prompt // "") | owners) as $p
+    | (.message // .notification_data.message // "") as $msg
+    | (.notification_type // "") as $nt
+    | (if $state == "done" then ((.last_assistant_message // "") | clip(800))
+       elif $state == "running" then "" else ($o.said // "") end) as $said
+    | { state: $state, ts: $ts,
+        session_id: (.session_id // $o.session_id // ""),
+        prompt: (if $p != "" then ($p | clip(400)) else ($o.prompt // "" | owners) end),
+        # What it is asking for. Idle means "the turn ended and nothing came
+        # back": what it last said is the actual question, so show that.
+        note: (if $state != "blocked" then ""
+               elif $nt == "idle_prompt" and $said != "" then $said
+               elif ($msg | type) == "string" and $msg != "" then ($msg | clip(400))
+               elif $nt == "permission_prompt" then "waiting for permission"
+               elif $nt == "idle_prompt" then "waiting for input"
+               elif $nt == "agent_needs_input" then "needs input"
+               elif $nt == "elicitation_dialog" or $nt == "elicitation_url_dialog" then "asking a question"
+               elif $nt != "" then $nt else ($o.note // "needs you") end),
+        said: $said }' > "$f.tmp" 2>/dev/null \
+    && mv "$f.tmp" "$f"
+  rm -f "$f.tmp"
+}
+
+cmd_statusline() {
+  # Claude Code's status line command, installed by `fleet install` as
+  #   "$HOME/bin/fleet statusline [-- '<the command that was there before>']"
+  # Claude Code runs it with a JSON snapshot on stdin after every assistant
+  # message: model, context window use, cost, and the account's rate limits.
+  # The numbers go to $FLEET_STATE/<tmux session>.stats.json for `status`;
+  # the previous command (if any) then gets the same JSON and draws the line
+  # as before, else a short line of the same numbers is printed.
+  local input session f
+  input=$(cat)
+  session=$(tmux display-message -p '#S' 2>/dev/null || echo detached)
+  mkdir -p "$FLEET_STATE"
+  f="$FLEET_STATE/$session.stats.json"
+  printf '%s' "$input" | jq -c --argjson ts "$(date +%s)" '
+    { ts: $ts,
+      model: (.model.display_name // .model.id // ""),
+      context_pct: ((.context_window.used_percentage // -1) | floor),
+      context_size: (.context_window.context_window_size // 0),
+      cost_usd: (.cost.total_cost_usd // 0),
+      limit_5h: ((.rate_limits.five_hour.used_percentage // -1) | floor),
+      limit_5h_reset: (.rate_limits.five_hour.resets_at // 0),
+      limit_7d: ((.rate_limits.seven_day.used_percentage // -1) | floor),
+      limit_7d_reset: (.rate_limits.seven_day.resets_at // 0) }' > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f"
+  rm -f "$f.tmp"
+  if [ "${1:-}" = "--" ] && [ $# -gt 1 ]; then
+    shift; printf '%s' "$input" | sh -c "$*"
+    return 0
+  fi
+  [ -f "$f" ] || return 0
+  jq -r '[ (if .model != "" then .model else empty end),
+           (if .context_pct >= 0 then "ctx \(.context_pct)%" else empty end),
+           (if .limit_5h >= 0 then "5h \(.limit_5h)%" else empty end),
+           (if .limit_7d >= 0 then "7d \(.limit_7d)%" else empty end) ] | join(" · ")' "$f" 2>/dev/null || true
+}
+
+usage() {
+  cat <<'EOF'
+fleet - Claude Code agent worktrees across your Macs
+
+  fleet ls [--all] [--json] [host...]
+                                  fleet sessions on every host (or just those);
+                                  --all: every clone and worktree; --json: records
+  fleet attach [query]            pick a session and attach to it here (prefix+d detaches)
+  fleet attach <host> <session>   the same without the picker
+  fleet open   [query]            pull the session's branch here and open it: Xcode when the
+  fleet open   <host> <session>   checkout has a project, else Finder, or FLEET_OPEN (code, cursor...)
+  fleet shell  [host] [dir]       a login shell on that Mac (in dir), here or in a FLEET_TERM window
+  fleet kill [-y] <host> <session>
+                                  end a session: its tmux session and the agent in it (-y: no prompt)
+  fleet new [host] [project] [task] [--all] [--no-attach]
+                                  pick a folder on that host (default: here) and start a session in
+                                  it; a name adds a session there, or a worktree once converted
+  fleet projects [host] [--all] [--json]
+                                  repos under FLEET_ROOT there, Claude-used first
+                                  (--all: also folders that are not repos yet)
+  fleet convert <project>         enable worktrees for a clone on this machine
+  fleet reap                      remove merged worktrees
+  fleet hosts [add [alias]|rm <alias>]
+                                  the host list; edits push it to every host.
+                                  `add` alone adds every Mac on the tailnet
+  fleet hosts push [host...]      push the host list again (e.g. a host was off)
+  fleet hosts info [--json]       chip, cores, memory, laptop/desktop, sessions per host
+  fleet keys [add "<pubkey>" | rm <comment>] [--local]
+                                  authorize an ssh public key (the iOS app's) on every Mac, or revoke it
+  fleet doctor [host...]          check install and config, here or on hosts
+  fleet install [host...|all]     clone or pull the repo, link ~/bin/fleet, seed config
+  fleet update  [host...|all]     same as install
+  fleet status [--all] [--json]   the same for this host only (remotes run it with --json)
+  fleet hook <state>              called by Claude Code hooks (install sets them up)
+  fleet statusline [-- <cmd>]     Claude Code's status line command (install sets it up):
+                                  records context, cost and usage limits, then runs <cmd>
+
+Config: ~/.config/fleet/config
+EOF
+}
+
+# `shift` on an empty argument list returns 1, which under set -e would end
+# the script silently, so peel the command off before the case.
+cmd="${1:-ls}"; [ $# -eq 0 ] || shift
+case "$cmd" in
+  ls)       cmd_ls "$@" ;;
+  attach|a) cmd_attach "$@" ;;
+  open|o)   cmd_open "$@" ;;
+  shell)    cmd_shell "$@" ;;
+  kill|stop) cmd_kill "$@" ;;
+  new|n)    cmd_new "$@" ;;
+  projects|p) cmd_projects "$@" ;;
+  convert)  cmd_convert "$@" ;;
+  reap)     cmd_reap ;;
+  hosts)    cmd_hosts "$@" ;;
+  keys)     cmd_keys "$@" ;;
+  doctor)   cmd_doctor "$@" ;;
+  install|update) cmd_install "$@" ;;
+  status)   cmd_status "$@" ;;
+  hook)     cmd_hook "${1:-idle}" ;;
+  statusline) cmd_statusline "$@" ;;
+  -h|--help|help) usage ;;
+  *)        printf 'fleet: unknown command "%s"\n\n' "$cmd" >&2; usage >&2; exit 1 ;;
+esac

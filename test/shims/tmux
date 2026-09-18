@@ -1,0 +1,10 @@
+#!/bin/bash
+# Fake tmux: logs every call; has-session succeeds for names in FAKE_TMUX_SESSIONS.
+echo "tmux $*" >> "${SHIM_LOG:-/dev/null}"
+case "${1:-}" in
+  has-session)     case " ${FAKE_TMUX_SESSIONS:-} " in *" $3 "*) exit 0 ;; *) exit 1 ;; esac ;;
+  display-message) echo "${FAKE_TMUX_SESSION:-detached}" ;;
+  list-clients)    exit 0 ;;
+  list-panes)      echo "${FAKE_TMUX_COMMAND:-zsh}" ;;   # what runs in the pane: zsh, or claude
+esac
+exit 0

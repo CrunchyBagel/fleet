@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# A stand-in for fleet that answers the Mac app's queries with made-up data,
+# for the README screenshots:
+#   FLEET_BIN="$PWD/docs/demo-fleet" app/.build/Build/Products/Debug/Fleet.app/Contents/MacOS/Fleet
+# Times are relative to now, so rows always read "2 min ago". Actions do nothing.
+set -euo pipefail
+now=$(date +%s)
+
+row() {  # host project name branch state subject dirty ahead age worktree prompt note said ctx
+  jq -n --arg host "$1" --arg project "$2" --arg name "$3" --arg branch "$4" --arg state "$5" \
+    --arg subject "$6" --argjson dirty "$7" --argjson ahead "$8" --argjson t "$((now - $9))" \
+    --argjson worktree "${10}" --arg prompt "${11}" --arg note "${12}" --arg said "${13}" \
+    --argjson ctx "${14}" --argjson now "$now" '
+    ($project | ascii_downcase) as $p
+    | {host: $host, project: $project, name: $name,
+       path: ("/Users/you/code/" + $project + (if $worktree then "/.claude/worktrees/" + $name else "" end)),
+       branch: $branch, upstream: ("origin/" + $branch), state: $state, subject: $subject,
+       session: ($project + "-" + $name), dirty: $dirty, ts: ($t - 900), ahead: $ahead, behind: 0,
+       managed: true, activity: $t, worktree: $worktree,
+       remote: ("git@github.com:example/" + $p + ".git"),
+       claude_session: ("session_01demo" + $p + $name), attached_from: [],
+       prompt: $prompt, note: $note, said: $said, model: "Opus 5", context_pct: $ctx, cost_usd: 0,
+       limit_5h: 23, limit_5h_reset: ($now + 9000), limit_7d: 41, limit_7d_reset: ($now + 260000),
+       stats_ts: ($now - 30)}'
+}
+
+sessions() {
+  {
+    row studio MyApp main main running "Fix crash when the login token expires" true 0 120 false \
+      "Fix the login crash from the latest crash report and add a regression test" "" "" 34
+    row studio MyApp sync agent/sync blocked "Add CloudKit zone migration" true 2 840 true \
+      "Move sync over to the new CloudKit zone, keeping old installs working" \
+      "Permission to run: xcodebuild test -scheme MyApp" "" 58
+    row studio Website main main "done" "Rewrite the pricing page" false 3 2400 false \
+      "Rewrite the pricing page around the new yearly plan" "" \
+      "The pricing page is rewritten and pushed. All 42 tests pass; the old monthly table is gone and the FAQ links to the new plan." 21
+    row mini MyApp release release/3.2 running "Bump build number to 412" false 1 45 true \
+      "Cut the 3.2 release branch, bump the build and write the release notes" "" "" 12
+    row mbp16 Backend main main idle "Add rate limiting to the export endpoint" false 0 86400 false "" "" "" -1
+  } | jq -s .
+}
+
+hosts_info() {
+  jq -n '{hosts: [
+      {host: "studio", model: "Mac14,14", model_name: "Mac Studio",  chip: "Apple M2 Ultra", cores: 24, pcores: 16, ecores: 8, mem_gb: 128, laptop: false, sessions: 3, score: 96, self: true},
+      {host: "mini",   model: "Mac16,10", model_name: "Mac mini",    chip: "Apple M4",       cores: 10, pcores: 4,  ecores: 6, mem_gb: 32,  laptop: false, sessions: 1, score: 61, self: false},
+      {host: "mbp16",  model: "Mac15,8",  model_name: "MacBook Pro", chip: "Apple M3 Max",   cores: 16, pcores: 12, ecores: 4, mem_gb: 64,  laptop: true,  sessions: 1, score: 78, self: false}],
+    down: [{host: "air", reason: "offline (Tailscale)"}]}'
+}
+
+case "${1:-} ${2:-}" in
+  "ls --json")     sessions ;;
+  "hosts info")    hosts_info ;;
+  "hosts ")        printf 'studio\nmini\nmbp16\nair\n' ;;
+  "projects "*)    jq -n --arg h "$2" '{host: $h, projects: [
+                     {project: "MyApp", layout: "worktrees", claude: true, path: "/Users/you/code/MyApp", remote: ""},
+                     {project: "Website", layout: "plain", claude: true, path: "/Users/you/code/Website", remote: ""}]}' ;;
+  "doctor "*)      printf '  ok    fleet is linked at ~/bin/fleet\n  ok    git, jq, tmux, fzf found\n  ok    Claude Code hooks installed\n  ok    status line installed\n  ok    host list matches this Mac\n' ;;
+  *)               : ;;
+esac
