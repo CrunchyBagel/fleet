@@ -217,3 +217,7 @@ there: what each agent is doing and what needs you, your usage limits,
 start a session on any Mac, open it in the Claude app, end it. Host keys
 are pinned on first connection. Lose the phone: `fleet keys rm fleet-<its
 name>`. Build it in Xcode with your own team; there is no App Store build.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
