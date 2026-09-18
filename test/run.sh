@@ -342,6 +342,12 @@ O=$(run doctor --local 2>&1); RC=$?
 assert_eq "doctor --local exits non-zero with failures" "$RC" "1"
 assert_contains "doctor reports missing hooks with a fix" "$O" "fix: fleet install   (merges them in"
 assert_contains "doctor names the host first"           "$(printf '%s' "$O" | head -1)" "laptop"
+# ~/bin on PATH is judged on the caller's PATH. Over ssh, with_path prepends
+# $HOME/bin before fleet starts, so it sends the PATH it found as
+# FLEET_ORIG_PATH; without that, remote install never wrote ~/.zprofile.
+assert_contains "doctor: ~/bin on the caller's PATH is ok"  "$(renv PATH="$T/home/bin:$HERE/shims:/usr/bin:/bin" -- doctor --local 2>&1)" "ok    ~/bin on your shell's PATH"
+assert_contains "doctor: with_path's PATH does not count"   "$(renv PATH="$T/home/bin:$HERE/shims:/usr/bin:/bin" FLEET_ORIG_PATH=/usr/bin:/bin -- doctor --local 2>&1)" "FAIL  ~/bin on your shell's PATH"
+assert_contains "doctor over ssh sees the remote's own PATH" "$(run doctor studio 2>&1)" "FAIL  ~/bin on your shell's PATH"
 assert_contains "plain fleet with no args runs ls"      "$(renv FLEET_STATE="$T/emptystate" -- 2>&1)" "no fleet sessions"
 assert_contains "ls --json (default) has only managed rows" "$(renv "$ALIVE" -- ls --json | jq -r 'all(.managed)')" "true"
 assert_eq "new --no-attach creates, prints host/session/dir, never prompts" \

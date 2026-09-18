@@ -91,7 +91,7 @@ tailscale_macs() {   # every macOS machine on the tailnet, self included, one pe
 # Non-interactive ssh shells and Claude Code hooks do not read .zshrc/.zprofile,
 # so nothing here may rely on the login PATH.
 : "${FLEET_PATH:=\$HOME/bin:\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin}"
-FLEET_ORIG_PATH="$PATH"                            # the caller's PATH, before we add to it
+: "${FLEET_ORIG_PATH:=$PATH}"                     # the caller's PATH, before we add to it (with_path sends the remote's)
 export PATH="${FLEET_PATH//\$HOME/$HOME}:$PATH"
 
 # Is ~/bin on the PATH the user's shell had, or at least set up to be next time?
@@ -103,7 +103,9 @@ bin_on_path() {
 # Prefix a command with the PATH prelude, for ssh and for terminals spawned by
 # `open`, neither of which inherit this process's PATH.
 # shellcheck disable=SC2016  # $PATH must reach the remote shell unexpanded
-with_path() { printf 'export PATH="%s:$PATH"; %s' "$FLEET_PATH" "$1"; }
+# FLEET_ORIG_PATH goes along so bin_on_path on the remote judges the PATH it
+# had before this prepend, not the one we just gave it.
+with_path() { printf 'export FLEET_ORIG_PATH="$PATH" PATH="%s:$PATH"; %s' "$FLEET_PATH" "$1"; }
 
 DIM=$'\033[2m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
 GREEN=$'\033[32m'; YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RED=$'\033[31m'
