@@ -18,7 +18,7 @@ fleet projects [host] [--json]        repos under FLEET_ROOT there
 fleet convert <project>               enable worktrees for a clone (on that Mac)
 fleet reap                            remove worktrees with nothing beyond the default branch
 fleet hosts [add [alias]|rm <alias>]  the host list, pushed to every Mac
-fleet hosts info [--json]             chip, cores, memory, load per host
+fleet hosts info [host...] [--json]   chip, cores, memory, load per host
 fleet keys [add "<pubkey>"|rm <name>]  authorize the phone app's ssh key on every Mac, or revoke it
 fleet doctor [host...]                check install and config
 fleet install|update [host...|all]    clone or pull fleet there, link it, seed config and hooks

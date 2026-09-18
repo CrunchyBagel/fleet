@@ -215,6 +215,8 @@ assert_contains "hosts info --json shape"               "$(renv FLEET_HOSTS="lap
 assert_eq "hosts info --json has this machine"          "$(renv FLEET_HOSTS="laptop" -- hosts info --json | jq -r '.hosts[0].host')" "laptop"
 assert_eq "hosts info --json marks self"                "$(renv FLEET_HOSTS="laptop" -- hosts info --json | jq -r '.hosts[0].self')" "true"
 assert_eq "hosts info --json names the model"           "$(renv FLEET_HOSTS="laptop" -- hosts info --json | jq -r '.hosts[0].model_name | type')" "string"
+assert_eq "hosts info <host> --json asks only that host"  "$(renv FLEET_HOSTS="laptop nofleet" -- hosts info laptop --json | jq -c '[.hosts[].host, .down]')" '["laptop",[]]'
+assert_contains "hosts info <unknown> dies"               "$(renv FLEET_HOSTS="laptop" -- hosts info nope --json 2>&1)" "unknown host 'nope'"
 assert_eq "status records carry the origin URL"         "$(run status --json --all | jq -r '.[] | select(.project=="plain") | .remote')" "$T/origins/alpha.git"
 
 # ---------------------------------------------------------------- attach / open

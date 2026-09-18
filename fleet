@@ -1525,12 +1525,19 @@ pick_host() {
   printf '%s\n' "${sel##*	}"
 }
 
-cmd_hosts_info() {   # fleet hosts info [--json]: the same table, non-interactive
-  local tmp f
+cmd_hosts_info() {   # fleet hosts info [host...] [--json]: the same table, non-interactive
+  local tmp f h asjson=0 hosts=""
+  for h in "$@"; do
+    case "$h" in
+      --json) asjson=1 ;;
+      *) case " $FLEET_HOSTS " in *" $h "*) hosts="$hosts $h" ;; *) die "unknown host '$h'. hosts:$(hosts_line)" ;; esac ;;
+    esac
+  done
+  [ -z "$hosts" ] || FLEET_HOSTS="$hosts"    # the app asks one host at a time on its first load
   tmp=$(mktemp -d)
   trap 'rm -rf "${tmp:-}"' RETURN
   hostinfo_into "$tmp"
-  if [ "${1:-}" = "--json" ]; then
+  if [ "$asjson" = 1 ]; then
     { for f in "$tmp"/*.down; do [ -e "$f" ] && jq -nc --arg host "$(basename "$f" .down)" --arg reason "$(cat "$f")" '{host: $host, reason: $reason}'; done; true; } > "$tmp/.down.jsonl"
     jq -sc --slurpfile down <(jq -s . "$tmp/.down.jsonl") --arg me "$FLEET_SELF" '
       { hosts: [ .[] | select(type == "object" and .host != null) | .self = (.host == $me)
@@ -1565,7 +1572,7 @@ hosts_push() {   # $1 host; sends this machine's hosts file (and allowed_signers
 cmd_hosts() {
   local op="${1:-}" h="${2:-}" t tmp
   case "$op" in
-    info) cmd_hosts_info "${2:-}"; return 0 ;;
+    info) shift; cmd_hosts_info "$@"; return 0 ;;
     --info-local) hostinfo_local; return 0 ;;
     "")
       for t in $FLEET_HOSTS; do printf '%s\n' "$t"; done

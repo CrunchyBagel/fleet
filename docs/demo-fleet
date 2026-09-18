@@ -48,9 +48,13 @@ hosts_info() {
     down: [{host: "air", reason: "offline (Tailscale)"}]}'
 }
 
+# `ls --json [host]` and `hosts info [host] --json`: the app asks per host on
+# its first load, so the sidebar fills in as answers arrive.
+only() { case "$1" in studio|mini|mbp16) jq --arg h "$1" "$2" ;; air) jq --arg h "$1" "$3" ;; *) cat ;; esac; }
+# shellcheck disable=SC2016  # $h is a jq variable
 case "${1:-} ${2:-}" in
-  "ls --json")     sessions ;;
-  "hosts info")    hosts_info ;;
+  "ls --json")     sleep "$(( ${RANDOM:-0} % 3 ))"; sessions | only "${3:-}" 'map(select(.host == $h))' '[]' ;;
+  "hosts info")    sleep "$(( ${RANDOM:-0} % 3 ))"; hosts_info | only "${3:-}" '{hosts: (.hosts | map(select(.host == $h))), down: []}' '{hosts: [], down: (.down | map(select(.host == $h)))}' ;;
   "hosts ")        printf 'studio\nmini\nmbp16\nair\n' ;;
   "projects "*)    jq -n --arg h "$2" '{host: $h, projects: [
                      {project: "MyApp", layout: "worktrees", claude: true, path: "/Users/you/code/MyApp", remote: ""},

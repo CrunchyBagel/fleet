@@ -143,7 +143,9 @@ struct HostRow: View {
                 .foregroundStyle(down == nil ? .primary : .secondary)
             Text(host).fontWeight(.semibold).foregroundStyle(down == nil ? .primary : .secondary)
             Spacer()
-            if down != nil {
+            if model.loading.contains(host) {
+                ProgressView().controlSize(.mini).help("Asking \(host)…")
+            } else if down != nil {
                 Image(systemName: "bolt.slash").foregroundStyle(.secondary).help(down!)
             } else {
                 let n = model.sessions(on: host).filter { $0.state == "blocked" }.count

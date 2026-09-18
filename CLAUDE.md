@@ -126,8 +126,9 @@ whoever runs it.
   `hosts info --json` carries `model` (the identifier, `Mac15,8`) and
   `model_name` (`system_profiler`'s "Model Name", `""` if unknown, absent
   from older remotes); the app picks the sidebar symbol from `model_name`.
-  For a wrapper app: `projects [host] --json`, `hosts info --json`, and the
-  picker-free `attach <host> <session>` / `open <host> <session>` (record_for).
+  For a wrapper app: `projects [host] --json`, `hosts info [host...] --json`,
+  and the picker-free `attach <host> <session>` / `open <host> <session>`
+  (record_for). `ls` and `hosts info` take host names to ask one host only.
 - `new` and `attach` end by attaching in the current terminal (`exec tmux
   new-session -A` locally, `exec ssh -t host ...` remotely; `switch-client`
   when already inside tmux). `FLEET_TERM=ghostty|terminal|iterm` (what the
@@ -336,6 +337,12 @@ whoever runs it.
   model re-arms its timer and refetches on `UserDefaults.didChangeNotification`.
   Attach sends `FLEET_TERM` from that terminal choice: raise the existing
   window or open a new one. `open` streams fleet's step lines into a busy row.
+  The first load (`FleetModel.firstLoad`) reads the host list, shows every
+  machine at once with a spinner (`loading`), asks each host on its own
+  (`ls --json <host>`, `hosts info <host> --json`) and fills rows in as
+  answers land, then sorts into `hosts info` order; later polls are the two
+  fan-out calls. `docs/demo-fleet` answers per host with a short random delay
+  so this can be seen.
   Polls carry a 60s deadline (`FleetCLI.pollTimeout`: the child is killed
   and the call throws, so one hung `fleet` cannot leave `refreshing` stuck).
   Polling errors clear themselves on the next good refresh (`lastError`);

@@ -166,12 +166,14 @@ struct FleetCLI {
     // own (FLEET_CMD_TIMEOUT per host, 10s by default), for the day fleet
     // itself hangs on something it did not bound.
     static let pollTimeout = 60
-    static func sessions(all: Bool) async throws -> [Session] {
-        var args = ["ls", "--json"]; if all { args.append("--all") }
+    /// `fleet ls --json [--all] [host]`: every host, or one (the first load
+    /// asks per host so the sidebar fills in as each answers).
+    static func sessions(all: Bool, host: String? = nil) async throws -> [Session] {
+        var args = ["ls", "--json"]; if all { args.append("--all") }; if let host { args.append(host) }
         return try await decode([Session].self, from: run(args, timeout: pollTimeout))
     }
-    static func hosts() async throws -> HostsInfo {
-        try await decode(HostsInfo.self, from: run(["hosts", "info", "--json"], timeout: pollTimeout))
+    static func hosts(host: String? = nil) async throws -> HostsInfo {
+        try await decode(HostsInfo.self, from: run(["hosts", "info"] + (host.map { [$0] } ?? []) + ["--json"], timeout: pollTimeout))
     }
     static func projects(on host: String) async throws -> ProjectsList {
         try await decode(ProjectsList.self, from: run(["projects", host, "--json"]))

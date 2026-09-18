@@ -55,6 +55,7 @@ final class FleetModel: ObservableObject {
     @Published var doctorRunning: Set<String> = []
     @Published var refreshing = false
     @Published var lastRefresh: Date?
+    @Published var loading: Set<String> = []          // hosts asked on the first load that have not answered yet
 
     // Window state that menus, the menu bar item and notifications also drive.
     /// $FLEET_SELECT ("host/session", or a host) picks what a launch shows, for screenshots (docs/demo-fleet).
@@ -89,6 +90,10 @@ final class FleetModel: ObservableObject {
             nodes.append(SidebarNode(item: .host(h.host), children: kids))
         }
         for d in hosts.down { nodes.append(SidebarNode(item: .host(d.host), children: nil)) }
+        // First load: every host from the list is there at once, in list
+        // order, with a spinner until its answer arrives and fills the row in.
+        let known = Set(hosts.hosts.map(\.host) + hosts.down.map(\.host))
+        for h in hostList where loading.contains(h) && !known.contains(h) { nodes.append(SidebarNode(item: .host(h), children: nil)) }
         return nodes
     }
     /// The tree narrowed to a search: sessions whose project, name, branch or
@@ -180,10 +185,15 @@ final class FleetModel: ObservableObject {
         Task {
             do {
                 let all = Prefs.showAllSessions
-                async let s = FleetCLI.sessions(all: all)
-                async let h = FleetCLI.hosts()
-                let (ss, hh) = try await (s, h)
-                sessions = ss; hosts = hh; lastError = nil; lastRefresh = Date()
+                if lastRefresh == nil {
+                    try await firstLoad(all: all)
+                } else {
+                    async let s = FleetCLI.sessions(all: all)
+                    async let h = FleetCLI.hosts()
+                    let (ss, hh) = try await (s, h)
+                    sessions = ss; hosts = hh
+                }
+                lastError = nil; lastRefresh = Date()
                 applied.all = all
                 noteNewlyBlocked()
                 NSApp.dockTile.badgeLabel = needsYou > 0 ? "\(needsYou)" : nil
@@ -192,6 +202,48 @@ final class FleetModel: ObservableObject {
             }
             refreshing = false
         }
+    }
+
+    /// The first load asks each host on its own (`ls --json <host>` and
+    /// `hosts info <host> --json`) and merges every answer as it lands, so the
+    /// sidebar shows all the machines at once and fills them in one by one
+    /// instead of staying blank until the slowest has answered. Later polls
+    /// are the two fan-out calls. The host list comes first: it is local and
+    /// instant, and it is what the placeholders are made from.
+    private func firstLoad(all: Bool) async throws {
+        hostList = try await FleetCLI.hostList()
+        loading = Set(hostList)
+        defer { loading = [] }
+        guard !hostList.isEmpty else { hosts = .init(hosts: [], down: []); return }
+        var firstError: Error?
+        await withTaskGroup(of: (String, Result<([Session], HostsInfo), Error>).self) { group in
+            for h in hostList {
+                group.addTask {
+                    do {
+                        async let s = FleetCLI.sessions(all: all, host: h)
+                        async let i = FleetCLI.hosts(host: h)
+                        return (h, .success(try await (s, i)))
+                    } catch { return (h, .failure(error)) }
+                }
+            }
+            for await (h, result) in group {
+                switch result {
+                case .success(let (ss, hi)):
+                    sessions = sessions.filter { $0.host != h } + ss
+                    hosts = HostsInfo(hosts: hosts.hosts.filter { $0.host != h } + hi.hosts,
+                                      down: hosts.down.filter { $0.host != h } + hi.down)
+                case .failure(let e):
+                    if firstError == nil { firstError = e }
+                }
+                loading.remove(h)
+            }
+        }
+        // Into the order `hosts info` would give: desktops before laptops,
+        // then by chip, then by load. One move now rather than on the next poll.
+        hosts = HostsInfo(hosts: hosts.hosts.sorted { a, b in
+            (a.laptop ? 1 : 0, -(a.score ?? 0), a.sessions) < (b.laptop ? 1 : 0, -(b.score ?? 0), b.sessions)
+        }, down: hosts.down)
+        if let firstError { throw firstError }
     }
 
     /// A session that has just gone from anything else to "needs you" gets a
