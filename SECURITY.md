@@ -130,9 +130,11 @@ piece buys an attacker, what fleet does about it, and what only you can do.
   project repos, with no access to this repo. `gh auth login --insecure-storage`
   (needed for gh to work over ssh) stores the token in plain text in
   `~/.config/gh/hosts.yml`: FileVault on, and that file mode 600.
-- **Branch protection here.** Require signed commits, forbid force pushes,
-  and read every pull request as if it were a script you are about to run on
-  every Mac you own, because it is.
+- **Branch protection.** On whichever repo your Macs update from, this one
+  or your fork, forbid force pushes and read every pull request as if it were
+  a script you are about to run on every Mac you own, because it is. Signed
+  commits are worth requiring if you turn on the signed-updates check above;
+  the commits in this repo are not signed.
 - **Claude Code itself.** `--permission-mode auto` and `--remote-control` are
   fleet's defaults (`FLEET_CLAUDE_ARGS`). Remote Control makes the session
   reachable from claude.ai on your account; protect that account accordingly,
