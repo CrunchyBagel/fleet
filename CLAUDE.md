@@ -92,9 +92,11 @@ whoever runs it.
   The owner is easing in: most projects stay plain for now.
 - tmux session name is `session_name project task` = `<project>-<task>` with
   `.` and `:` turned into `_`, because tmux does that itself. Always go through
-  the helper. `new` starts a shell and types `claude -n <session> $FLEET_CLAUDE_ARGS`
+  the helper. `new` starts a shell and types `claude -n <FLEET_SELF>-<session> $FLEET_CLAUDE_ARGS`
   (default `--permission-mode auto --remote-control`) into it so the session
-  outlives the agent, is named like the tmux session, and shows in the mobile app.
+  outlives the agent and shows in the Claude apps, where the machine prefix
+  tells two Macs' `<project>-main` apart (only that label carries it; the tmux
+  session, the records and both Fleet apps do not).
 - Agents commit and push with `-u`; until they push, `open` from another machine
   refuses and `ls` shows `no upstream`. `fleet status` never fetches, so
   ahead/behind reflect the last fetch on that host.
@@ -292,7 +294,10 @@ whoever runs it.
   (orange, blocked) else the prompt (`Session.doing`); the session screen
   shows the exchange: "You asked", a "Needs" row only for a request that is
   not the reply (a permission), and the reply, orange when it is what the
-  agent waits on; then Model and a "Context window" gauge (no cost: the
+  agent waits on; then a git box (`GitStateBox`: uncommitted yes/no, and
+  unpushed = ahead count, never pushed, or no remote; "behind" when > 0;
+  state from the record only, decision 5) because that is the work no other
+  Mac can see; then Model and a "Context window" gauge (no cost: the
   owner does not want it shown, `cost_usd` stays in the record); the machine table has Doing and Context columns; the Overview
   shows a Claude usage box (`UsageView`, from `FleetModel.usage`, the
   freshest snapshot with limits) and the menu bar menu repeats the numbers;

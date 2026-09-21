@@ -43,9 +43,9 @@ or input, `✓ done` it finished its turn, `· idle` the session ended,
 is what the agent is asking for, else what it was told to do. The usage
 line is your account's rate limits, from the newest status line snapshot.
 
-Sessions are `claude -n <project>-<name> --permission-mode auto
---remote-control` in a tmux session of the same name, so they also appear in
-the Claude apps under that name. `FLEET_CLAUDE_ARGS` in the config changes
+Sessions are `claude -n <machine>-<project>-<name> --permission-mode auto
+--remote-control` in a tmux session named `<project>-<name>`, so they also
+appear in the Claude apps, where the machine tells two Macs' sessions apart. `FLEET_CLAUDE_ARGS` in the config changes
 the flags. `FLEET_TERM=ghostty|terminal|iterm` makes attach and shell open
 a window in that app instead of the current terminal, raising an existing
 window on the session when there is one.

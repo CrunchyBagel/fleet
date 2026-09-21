@@ -135,7 +135,7 @@ assert_contains "projects --json shape" "$(run projects --json)" '"project":"pla
 : > "$SHIM_LOG"
 D=$(run new --local plain)
 assert_eq "new --local plain: runs in the repo"            "$D" "$T/root/plain"
-assert_contains "new types claude with name, auto mode, remote control" "$(cat "$SHIM_LOG")" "send-keys -t plain-main claude -n 'plain-main' --permission-mode auto --remote-control"
+assert_contains "new types claude with name, auto mode, remote control" "$(cat "$SHIM_LOG")" "send-keys -t plain-main claude -n 'laptop-plain-main' --permission-mode auto --remote-control"
 assert_true "registers the session"                         test -e "$T/state/sessions/plain-main"
 assert_eq "registry records dir and project"                "$(cat "$T/state/sessions/plain-main" | tr '\n' ' ')" "$T/root/plain plain "
 D=$(run new --local plain review)
@@ -357,7 +357,7 @@ assert_eq "new --no-attach creates, prints host/session/dir, never prompts" \
 assert_eq "new --no-attach with a name"                 "$(run new laptop plain triage --no-attach | cut -f2)" "plain-triage"
 : > "$SHIM_LOG"
 assert_eq "a name with a quote in it is a session too"   "$(run new laptop plain "won't-fix" --no-attach | cut -f2)" "plain-won't-fix"
-assert_contains "  ...typed into the pane correctly quoted" "$(cat "$SHIM_LOG")" "claude -n 'plain-won'\''t-fix'"
+assert_contains "  ...typed into the pane correctly quoted" "$(cat "$SHIM_LOG")" "claude -n 'laptop-plain-won'\''t-fix'"
 printf '%s\nplainR\n' "$T/rootR/plainR" > "$RH/.local/state/fleet/sessions/plainR-won't-fix"
 : > "$SHIM_LOG"; renv FLEET_HOSTS="laptop studio" "FAKE_TMUX_SESSIONS=plainR-main plainR-won't-fix" -- attach studio "plainR-won't-fix" >/dev/null 2>&1
 assert_contains "  ...and attached over ssh, the remote shell parsing the quoted name" "$(cat "$SHIM_LOG")" "tmux new-session -A -s plainR-won't-fix"

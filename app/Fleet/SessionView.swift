@@ -124,6 +124,8 @@ struct SessionView: View {
                 }
             }
 
+            GitStateBox(session: session)
+
             GroupBox {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     if session.hasStats {
@@ -144,7 +146,6 @@ struct SessionView: View {
                     }
                     GridRow { Text("Last activity").foregroundStyle(.secondary); Text(session.shownTime.map { $0.formatted(.relative(presentation: .named)) + "  ·  " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "—") }
                     GridRow { Text("Branch").foregroundStyle(.secondary); BranchText(session: session) }
-                    GridRow { Text("Upstream").foregroundStyle(.secondary); Text(session.upstream.isEmpty ? "none (not pushed yet)" : session.upstream) }
                     GridRow { Text("Last commit").foregroundStyle(.secondary); Text(session.subject.isEmpty ? "—" : session.subject).lineLimit(2) }
                     GridRow { Text("Path").foregroundStyle(.secondary); Text(session.path).textSelection(.enabled) }
                     GridRow { Text("Checkout").foregroundStyle(.secondary); Text(session.worktree ? "worktree (its own branch and files)" : "main repo") }
@@ -160,6 +161,53 @@ struct SessionView: View {
             Spacer()
         }
         .padding()
+    }
+}
+
+/// Work that exists only on the session's machine. Git is the only transport
+/// between Macs, so uncommitted files and unpushed commits are exactly what
+/// another machine cannot see. State only, from the record: fleet is not a
+/// git client. `fleet status` never fetches, so "behind" is as of that
+/// machine's last fetch.
+struct GitStateBox: View {
+    let session: Session
+
+    private var unpushed: (text: String, warn: Bool) {
+        if session.upstream.isEmpty {
+            if session.remote?.isEmpty != false { return ("No remote: this repository exists only on \(session.host)", true) }
+            return ("\(session.branch) has never been pushed", true)
+        }
+        if session.ahead > 0 { return ("\(session.ahead) commit\(session.ahead == 1 ? "" : "s") not pushed to \(session.upstream)", true) }
+        return ("Nothing: \(session.upstream) has every commit", false)
+    }
+
+    var body: some View {
+        GroupBox {
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                GridRow {
+                    Text("Uncommitted").foregroundStyle(.secondary).gridColumnAlignment(.leading)
+                    line(session.dirty ? "Changes in the working tree on \(session.host)" : "Nothing: the working tree is clean", warn: session.dirty)
+                }
+                GridRow { Text("Unpushed").foregroundStyle(.secondary); line(unpushed.text, warn: unpushed.warn) }
+                if session.behind > 0 {
+                    GridRow {
+                        Text("Behind").foregroundStyle(.secondary)
+                        line("\(session.behind) commit\(session.behind == 1 ? "" : "s") on \(session.upstream) not here yet (as of \(session.host)'s last fetch)", warn: false, symbol: "arrow.down.circle")
+                    }
+                }
+            }
+            .font(.callout)
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func line(_ text: String, warn: Bool, symbol: String? = nil) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol ?? (warn ? "exclamationmark.circle.fill" : "checkmark.circle"))
+                .foregroundStyle(warn ? Color.orange : Color.secondary)
+            Text(text).textSelection(.enabled)
+        }
     }
 }
 

@@ -1005,11 +1005,13 @@ new_local() {
     # A shell with claude typed into it, not `claude` as the session command,
     # so the session (and the `attached` fallback state) outlives the agent.
     tmux new-session -d -s "$session" -c "$dir"
-    # Named after the tmux session so the phone app and fleet ls agree;
+    # Named <machine>-<tmux session>: the Claude apps list every machine's
+    # sessions together and two Macs can both have a Project-main. Only this
+    # label carries the machine; the tmux session and fleet's records do not.
     # --remote-control makes it reachable from claude.ai/code and the mobile
     # app, --permission-mode auto starts it in auto mode. FLEET_CLAUDE_ARGS in
     # the config changes the flags per machine.
-    tmux send-keys -t "$session" "claude -n $(shq "$session") $FLEET_CLAUDE_ARGS" Enter
+    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS" Enter
   fi
   brand_session "$session" "$FLEET_SELF"
   register_session "$session" "$dir" "$project"
