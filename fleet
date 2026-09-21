@@ -634,14 +634,17 @@ pick() {
 
 # ---------------------------------------------------------------- terminal
 
-# The terminal window title follows the tmux session ("<session> · fleet"),
-# which is what lets us find a window that already shows the session.
-title_opts() { local q; q=$(shq "$1"); printf "tmux set-option -q -t %s set-titles on 2>/dev/null; tmux set-option -q -t %s set-titles-string '#S · fleet' 2>/dev/null" "$q" "$q"; }
+# The terminal window title follows the tmux session and its machine
+# ("<session> · <host> · fleet"), which is what lets us find a window that
+# already shows the session. The host is part of it: two Macs can both have a
+# Project-main, and the other one's window is not this session.
+# $1 session, $2 host (valid_host characters only, safe inside the quotes).
+title_opts() { local q; q=$(shq "$1"); printf "tmux set-option -q -t %s set-titles on 2>/dev/null; tmux set-option -q -t %s set-titles-string '#S · %s · fleet' 2>/dev/null" "$q" "$q" "$2"; }
 
-# raise_term_window <term> <session>: bring an existing window showing the
-# session to the front. Prints "raised" and returns 0 if one was found.
+# raise_term_window <term> <session> <host>: bring an existing window showing
+# that host's session to the front. Prints "raised" and returns 0 if one was found.
 raise_term_window() {
-  local term="$1" marker="$2 · fleet" out=""
+  local term="$1" marker="$2 · $3 · fleet" out=""
   case "$term" in
     ghostty) out=$(osascript - "$marker" <<'EOF' 2>/dev/null || true
 on run argv
@@ -760,11 +763,11 @@ launch_term() {
   # a shell will parse: a name with a quote in it must not break out of it.
   local host="$1" session="$2" dir="$3" inner term="${FLEET_TERM:-inline}" brand qs qd
   qs=$(shq "$session"); qd=$(shq "$dir")
-  brand="tmux set-option -q -t $qs status-left-length 60 2>/dev/null; tmux set-option -q -t $qs status-left '#[fg=black,bg=green,bold] $host #[default] #S ' 2>/dev/null; $(title_opts "$session")"
+  brand="tmux set-option -q -t $qs status-left-length 60 2>/dev/null; tmux set-option -q -t $qs status-left '#[fg=black,bg=green,bold] $host #[default] #S ' 2>/dev/null; $(title_opts "$session" "$host")"
   inner=$(with_path "infocmp \"\$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; cd $qd 2>/dev/null; $brand; tmux new-session -A -s $qs")
   if [ "$term" != inline ]; then
-    if raise_term_window "$term" "$session" >/dev/null; then
-      printf '%s  %s already shows %s, brought to front%s\n' "$DIM" "$term" "$session" "$RESET"; return 0
+    if raise_term_window "$term" "$session" "$host" >/dev/null; then
+      printf '%s  %s already shows %s on %s, brought to front%s\n' "$DIM" "$term" "$session" "$host" "$RESET"; return 0
     fi
     # The command runs via the login shell locally so the user's PATH and rc
     # files apply; remotely it is ssh.
@@ -966,7 +969,7 @@ brand_session() {
   tmux set-option -q -t "$1" status-left-length 60 2>/dev/null || true
   tmux set-option -q -t "$1" status-left "#[fg=black,bg=green,bold] $2 #[default] #S " 2>/dev/null || true
   tmux set-option -q -t "$1" set-titles on 2>/dev/null || true
-  tmux set-option -q -t "$1" set-titles-string '#S · fleet' 2>/dev/null || true
+  tmux set-option -q -t "$1" set-titles-string "#S · $2 · fleet" 2>/dev/null || true
 }
 
 # Start (or re-use) a session on THIS machine. Prints the directory the

@@ -135,7 +135,8 @@ whoever runs it.
   new-session -A` locally, `exec ssh -t host ...` remotely; `switch-client`
   when already inside tmux). `FLEET_TERM=ghostty|terminal|iterm` (what the
   app uses, chosen in its Settings) first asks that app, via AppleScript, for
-  a window whose title contains `<session> · fleet` (tmux `set-titles` is
+  a window whose title contains `<session> · <host> · fleet` (the host because
+  two Macs can have the same session name; tmux `set-titles` is
   turned on per session for this) and brings it to the front
   (`raise_term_window`); otherwise it opens a new window running the attach
   (`open_term_window`: Ghostty 1.3+ `new surface configuration` with

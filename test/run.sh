@@ -226,12 +226,14 @@ run new --local plain >/dev/null            # re-register: an earlier test let p
 : > "$SHIM_LOG"
 renv FLEET_HOSTS="laptop studio" -- attach studio plainR-main >/dev/null 2>&1
 assert_contains "attach <host> <session> runs tmux on the remote via ssh -t" "$(cat "$SHIM_LOG")" "tmux new-session -A -s plainR-main"
+assert_contains "  ...titling the window with the session and its machine" "$(cat "$SHIM_LOG")" "#S · studio · fleet"
 assert_contains "attach unknown session errors"         "$(renv FLEET_HOSTS="laptop studio" -- attach studio nosuch 2>&1)" "no session 'nosuch' on studio"
 assert_contains "attach unknown host errors"            "$(renv FLEET_HOSTS="laptop" -- attach nosuch x 2>&1)" "unknown host"
 : > "$SHIM_LOG"; renv FLEET_HOSTS="laptop studio" FLEET_TERM=terminal -- attach studio plainR-main >/dev/null 2>&1
 assert_contains "FLEET_TERM=terminal looks for an existing Terminal window first" "$(cat "$SHIM_LOG")" 'tell application "Terminal"'
 assert_contains "  ...then opens a new one with do script"   "$(cat "$SHIM_LOG")" "do script"
 assert_contains "  ...whose title marks the session"         "$(cat "$SHIM_LOG")" "set-titles-string"
+assert_contains "  ...and the machine: the same session name on another Mac is another window" "$(cat "$SHIM_LOG")" "plainR-main · studio · fleet"
 : > "$SHIM_LOG"; renv FLEET_HOSTS="laptop studio" FLEET_TERM=ghostty -- attach studio plainR-main >/dev/null 2>&1
 assert_contains "FLEET_TERM=ghostty opens a Ghostty surface"  "$(cat "$SHIM_LOG")" "new surface configuration"
 assert_contains "FLEET_TERM=bogus is rejected"                "$(renv FLEET_HOSTS="laptop studio" FLEET_TERM=bogus -- attach studio plainR-main 2>&1)" "expected inline, ghostty, terminal or iterm"
