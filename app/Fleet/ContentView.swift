@@ -11,42 +11,50 @@ struct ContentView: View {
                 set: { open in if open { collapsed.remove(host) } else { collapsed.insert(host) } })
     }
 
+    /// The tree as plain rows, a folded machine's sessions left out. Sessions
+    /// used to sit in a DisclosureGroup per machine; the outline view behind
+    /// that strands the selected row's cell whenever rows around it come or
+    /// go (a stale copy drawn over its neighbour until the next change), with
+    /// or without animations or an id on the group. A flat list does not.
+    private var rows: [SidebarRow] {
+        var out: [SidebarRow] = []
+        for node in model.tree(matching: query) {
+            guard case .host(let h) = node.item else { continue }
+            out.append(.host(h, foldable: node.children != nil))      // not answering: nothing beneath
+            guard let kids = node.children, !collapsed.contains(h) else { continue }
+            for k in kids { if case .session(let id) = k.item { out.append(.session(id)) } }
+            if kids.isEmpty && query.isEmpty { out.append(.newSession(h)) }
+        }
+        return out
+    }
+
     var body: some View {
         NavigationSplitView {
             List(selection: $model.selected) {
                 Label("Overview", systemImage: "square.grid.2x2").tag(Item.overview)
                 Section("Machines") {
-                ForEach(model.tree(matching: query)) { node in
-                    if case .host(let h) = node.item {
-                        if let kids = node.children {
-                            DisclosureGroup(isExpanded: expanded(h)) {
-                                // Keyed on the set of sessions: a session appearing or
-                                // ending rebuilds the rows instead of shuffling cells.
-                                Group {
-                                    ForEach(kids) { k in
-                                        if case .session(let id) = k.item, let s = model.session(id: id) {
-                                            SessionRow(session: s).tag(Item.session(id))
-                                                .contextMenu { SessionMenu(session: s) }
-                                        }
-                                    }
+                    // Flat rows, not DisclosureGroups: see `rows`.
+                    ForEach(rows) { row in
+                        switch row {
+                        case .host(let h, let foldable):
+                            HostRow(host: h, expanded: foldable ? expanded(h) : nil).tag(Item.host(h))
+                                .contextMenu { HostMenu(host: h) }
+                        case .session(let id):
+                            if let s = model.session(id: id) {
+                                SessionRow(session: s).padding(.leading, 18).tag(Item.session(id))
+                                    .contextMenu { SessionMenu(session: s) }
+                            }
+                        case .newSession(let h):                     // an empty machine looks broken; give it something to do
+                            Button { model.newSessionOn = NewSessionTarget(host: h) } label: {
+                                HStack(spacing: 8) {     // same shape as SessionRow so it lines up
+                                    Image(systemName: "plus.circle").frame(width: 10)
+                                    Text("New session…")
                                 }
-                                .id(kids.map(\.id.id).joined(separator: "|"))
-                                if kids.isEmpty && query.isEmpty {       // an empty group looks broken; give it something to do
-                                    Button { model.newSessionOn = NewSessionTarget(host: h) } label: {
-                                        HStack(spacing: 8) {     // same shape as SessionRow so it lines up
-                                            Image(systemName: "plus.circle").frame(width: 10)
-                                            Text("New session…")
-                                        }
-                                        .foregroundStyle(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            } label: { HostRow(host: h).tag(Item.host(h)).contextMenu { HostMenu(host: h) } }
-                        } else {
-                            HostRow(host: h).tag(Item.host(h)).contextMenu { HostMenu(host: h) }   // not answering: nothing beneath
+                                .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain).padding(.leading, 18)
                         }
                     }
-                }
                 }
             }
             .listStyle(.sidebar)
@@ -102,6 +110,19 @@ struct ContentView: View {
     }
 }
 
+private enum SidebarRow: Identifiable {
+    case host(String, foldable: Bool)
+    case session(String)          // Session.id
+    case newSession(String)       // the machine it would start on
+    var id: String {
+        switch self {
+        case .host(let h, _): return "host/\(h)"
+        case .session(let s): return "session/\(s)"
+        case .newSession(let h): return "new/\(h)"
+        }
+    }
+}
+
 /// Right-click on a session in the sidebar.
 struct SessionMenu: View {
     @EnvironmentObject var model: FleetModel
@@ -136,9 +157,18 @@ struct HostMenu: View {
 struct HostRow: View {
     @EnvironmentObject var model: FleetModel
     let host: String
+    var expanded: Binding<Bool>? = nil      // the sidebar's fold chevron; nil = nothing to fold
     var body: some View {
         let down = model.downReason(for: host)
         HStack {
+            if let expanded {
+                Button { expanded.wrappedValue.toggle() } label: {
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
+                        .frame(width: 12, height: 16).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
             Image(systemName: model.info(for: host)?.symbol ?? "desktopcomputer")
                 .foregroundStyle(down == nil ? .primary : .secondary)
             Text(host).fontWeight(.semibold).foregroundStyle(down == nil ? .primary : .secondary)

@@ -265,9 +265,13 @@ whoever runs it.
   automatic signing. Build from the shell:
   `xcodebuild -project app/Fleet.xcodeproj -scheme Fleet -derivedDataPath app/.build build`. Single window,
   `NavigationSplitView`: sidebar = machines, each with its fleet sessions
-  in a fixed project order (never re-sorted by state: rows that move leave
-  ghost cells in the outline view; the rows are keyed on the set of session
-  ids so a session appearing or ending rebuilds them), every row two lines
+  in a fixed project order, as one flat list of rows (`ContentView.rows`;
+  `HostRow` draws its own fold chevron). Not a `DisclosureGroup` per
+  machine: the outline view behind that strands the selected row's cell
+  whenever rows around it come or go, a stale copy drawn over its
+  neighbour, and neither an `.id` on the group nor disabling animations
+  stops it; to reproduce, poll a stand-in whose session set changes with a
+  session selected (`FLEET_SELECT=host/session`). Every row two lines
   (the second the note/prompt else the branch: the List caches row heights,
   and a row that grows later is drawn over its neighbour), with how long a
   blocked one has waited, searchable (⌘F, project/

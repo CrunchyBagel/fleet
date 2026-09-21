@@ -78,9 +78,9 @@ final class FleetModel: ObservableObject {
 
     /// Sidebar tree: machines (answering ones first, in `fleet hosts info`
     /// order, then the ones not answering), each with its active sessions in
-    /// a fixed project order. Not "needs you first": rows that move when a
-    /// state changes leave ghost cells behind in the outline view; the dot,
-    /// the badge and the waiting time already say what needs you.
+    /// a fixed project order. Not "needs you first": rows that jump about as
+    /// states change are hard to follow; the dot, the badge and the waiting
+    /// time already say what needs you. (ContentView flattens this into rows.)
     var tree: [SidebarNode] {
         var nodes: [SidebarNode] = []
         for h in hosts.hosts {
