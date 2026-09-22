@@ -251,6 +251,9 @@ struct NewSessionSheet: View {
                     if p.claude { Text("claude").foregroundStyle(.secondary).font(.caption).padding(.horizontal, 5).background(.quaternary, in: Capsule()) }
                 }
                 .tag(p.project)
+                .contentShape(Rectangle())
+                // A double-click starts the session, as Enter does; simultaneous so a single click still selects.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { project = p.project; start(project: p.project) })
             }
             .frame(height: 180)
             .overlay {
@@ -277,8 +280,8 @@ struct NewSessionSheet: View {
 
     /// Runs fleet with the sheet up, showing each stage; closes on success,
     /// shows the error and stays otherwise.
-    private func start() {
-        guard let p = chosen, status == nil else { return }
+    private func start(project override: String? = nil) {
+        guard let p = override ?? chosen, status == nil else { return }
         failure = nil
         Task {
             do {
