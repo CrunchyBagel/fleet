@@ -248,9 +248,8 @@ extension Session {
     /// "MyApp" for the main session, "MyApp · review" for a named one.
     var title: String { name == "main" ? project : "\(project) · \(name)" }
 
-    /// The model family as a tag: "FABLE" from "Fable 5.1", "OPUS" from
-    /// "Claude Opus 5". Version dropped on purpose; nil without a snapshot.
-    /// Exists so a costly model is visible at a glance in the sidebar.
+    /// The model family: "FABLE" from "Fable 5.1", "OPUS" from "Claude Opus 5";
+    /// nil without a snapshot. Picks the tag colour; `modelTag` adds the version.
     var modelFamily: String? {
         guard let m = model, !m.isEmpty else { return nil }
         let words = m.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map { String($0) }
@@ -258,6 +257,18 @@ extension Session {
         if let w = words.first(where: { known.contains($0.lowercased()) }) { return w.uppercased() }
         // Unknown family: the first word that is not just "Claude" or a version.
         return words.first(where: { $0.lowercased() != "claude" && $0.first?.isLetter == true })?.uppercased()
+    }
+    /// The sidebar tag: family plus version, "OPUS 5.5" from "Opus 5.5 (1M
+    /// context)", "FABLE 5.1" from "Claude Fable 5.1". The version is the
+    /// first number after the family word; just the family when there is none.
+    var modelTag: String? {
+        guard let family = modelFamily, let m = model else { return nil }
+        let words = m.split(whereSeparator: { $0.isWhitespace }).map { String($0) }
+        guard let i = words.firstIndex(where: { $0.uppercased().contains(family) }) else { return family }
+        let version = words[(i + 1)...].first(where: { $0.first?.isNumber == true })?
+            .prefix(while: { $0.isNumber || $0 == "." })
+        guard let v = version?.trimmingCharacters(in: CharacterSet(charactersIn: ".")), !v.isEmpty else { return family }
+        return "\(family) \(v)"
     }
     /// One colour per family so the tags tell apart without reading.
     var modelColor: Color {

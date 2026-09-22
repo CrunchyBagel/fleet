@@ -22,12 +22,12 @@ struct StateDot: View {
     }
 }
 
-/// A small capsule with the model family ("OPUS"), coloured per family, so a
+/// A small capsule with the model ("OPUS 5.5"), coloured per family, so a
 /// costly model stands out in the sidebar. Nothing when there is no snapshot.
 struct ModelTag: View {
     let session: Session
     var body: some View {
-        if let f = session.modelFamily {
+        if let f = session.modelTag {
             Text(f).font(.system(size: 9, weight: .bold)).tracking(0.5)
                 .foregroundStyle(session.modelColor)
                 .padding(.horizontal, 5).padding(.vertical, 1.5)
