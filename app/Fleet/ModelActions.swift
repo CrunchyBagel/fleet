@@ -19,6 +19,16 @@ extension FleetModel {
             catch { actionError = "\(what): \(error.localizedDescription)" }
         }
     }
+    /// Screen Sharing to a machine: over its LAN address when that answers,
+    /// else the tailnet name, and High Performance only when both ends are
+    /// wired (`ScreenSharing.plan`). The probe takes at most a moment.
+    func screenShare(_ host: String) {
+        let remote = info(for: host), me = selfHost.flatMap { info(for: $0) }
+        Task {
+            let target = await ScreenSharing.plan(host: host, remote: remote, me: me)
+            if let u = ScreenSharing.url(target) { NSWorkspace.shared.open(u) }
+        }
+    }
     func attach(_ s: Session) {
         let t = Terminal.preferred
         perform("attach") { try await FleetCLI.attach(host: s.host, session: s.session, terminal: t) }

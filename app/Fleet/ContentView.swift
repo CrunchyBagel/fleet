@@ -147,7 +147,7 @@ struct HostMenu: View {
         let down = model.downReason(for: host) != nil
         Button("New Session…") { model.newSessionOn = NewSessionTarget(host: host) }.disabled(down)
         Button("Shell") { model.shell(on: host) }.disabled(down)
-        if !model.isSelf(host) { Button("Screen Sharing") { screenShare(host) }.disabled(down) }
+        if !model.isSelf(host) { Button("Screen Sharing") { model.screenShare(host) }.disabled(down) }
         Divider()
         Button("Run Doctor") { model.runDoctor(on: host) }
         Button("Update Fleet…") { model.updateFleet(on: host) }.disabled(down)

@@ -1487,8 +1487,29 @@ cmd_doctor() {
 # sessions it is already running. Each host reports its own via
 # `fleet hosts --info-local`; the picker ranks desktops first, then cores.
 
+# lan_info: how to reach this Mac on its own network, for the app's Screen
+# Sharing choice: Bonjour name, IPv4 of the default-route interface, and
+# whether that interface is ethernet or wifi ("" when the default route is a
+# VPN or unknown). Printed as "<name>\t<ip>\t<link>"; each may be empty.
+lan_info() {
+  local name ifc ip="" link="" wifi
+  name=$(scutil --get LocalHostName 2>/dev/null || true)
+  [ -n "$name" ] && name="$name.local"
+  ifc=$(route -n get default 2>/dev/null | awk '/interface:/ { print $2; exit }' || true)
+  if [ -n "$ifc" ]; then
+    ip=$(ipconfig getifaddr "$ifc" 2>/dev/null || true)
+    # The hardware port is named by the system (the user renames services, not ports).
+    wifi=$(networksetup -listallhardwareports 2>/dev/null | awk '/^Hardware Port: (Wi-Fi|AirPort)$/ { getline; print $2; exit }' || true)
+    case "$ifc" in
+      "$wifi") link=wifi ;;
+      en*|bridge*) link=ethernet ;;
+    esac
+  fi
+  printf '%s\t%s\t%s\n' "$name" "$ip" "$link"
+}
+
 hostinfo_local() {
-  local model name chip cores pcores ecores mem laptop=false n=0 f
+  local model name chip cores pcores ecores mem laptop=false n=0 f lan_name lan_ip lan_link
   model=$(sysctl -n hw.model 2>/dev/null || echo unknown)
   # "Mac mini", "MacBook Pro"...; the identifier alone (Mac15,8) no longer says. Fast (~0.1s).
   name=$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Model Name/ { print $2; exit }')
@@ -1501,9 +1522,13 @@ hostinfo_local() {
   for f in "$FLEET_SESSIONS"/*; do
     [ -e "$f" ] && tmux has-session -t "$(basename "$f")" 2>/dev/null && n=$((n + 1))
   done
+  IFS=$'\t' read -r lan_name lan_ip lan_link <<EOF2
+$(lan_info)
+EOF2
   jq -nc --arg host "$FLEET_SELF" --arg model "$model" --arg model_name "$name" --arg chip "$chip" \
      --argjson cores "$cores" --argjson pcores "$pcores" --argjson ecores "$ecores" \
      --argjson mem_gb "$mem" --argjson laptop "$laptop" --argjson sessions "$n" \
+     --arg lan_name "$lan_name" --arg lan_ip "$lan_ip" --arg lan_link "$lan_link" \
      '$ARGS.named'
 }
 

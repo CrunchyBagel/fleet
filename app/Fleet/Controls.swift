@@ -73,12 +73,6 @@ struct ActionButton: View {
     }
 }
 
-/// Opens Screen Sharing.app to a host over the tailnet. Hosts pass
-/// `valid_host`, so the name is safe inside a URL.
-func screenShare(_ host: String) {
-    if let u = URL(string: "vnc://\(host)") { NSWorkspace.shared.open(u) }
-}
-
 // MARK: - Brand marks
 //
 // SF Symbols has no logos. These are the official marks as SVG path data

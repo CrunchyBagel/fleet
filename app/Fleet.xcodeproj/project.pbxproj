@@ -3,47 +3,58 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 70;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		083027A1394959B4F6AA81BE /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 8B53524E43B6752C3CB29043 /* AppIcon.icon */; };
+		2364C83C3A3702025E147576 /* Fleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11577105A672148D036E55F3 /* Fleet.swift */; };
+		24A078877D76CE9EFBF22844 /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4037D28DBBC954D604FA1685 /* SessionView.swift */; };
+		2550A65E25CC4FF39C7B4EEA /* FleetMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */; };
+		3F970686C0779DD27C3834C1 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09A0690E82130C7764087497 /* Views.swift */; };
+		41E3992484038DE6A874A69C /* MobileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */; };
+		4B3BAA071F1B50A35D4BAB96 /* ModelActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB28D64E206265D44338F61 /* ModelActions.swift */; };
+		4BA18406B33414ACA892B72F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1FBC533AD3B17229A6BB166 /* ContentView.swift */; };
 		5137AA2672DBAEE5F5ED8BAB /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 5264CE5893240A31FCCAD7BC /* Citadel */; };
+		58BC2F39725CD537B361D97F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28AA695414672DE697BA6F49 /* Models.swift */; };
+		5DC9786A4DDBC3D1C19D8B34 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 8B53524E43B6752C3CB29043 /* AppIcon.icon */; };
+		77685373CB72A52A2D532901 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28AA695414672DE697BA6F49 /* Models.swift */; };
+		7AF41430EE88A4658876AB8B /* SSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF449911F45F0E24FAB0D2E1 /* SSH.swift */; };
+		82E09FD38FCCC0D22B04ECBE /* HostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B305171705245CC710FE3FD /* HostView.swift */; };
+		A61CBE0EF3FCF9520D086E85 /* OverviewViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */; };
+		A6DD10F26F51E83C54FD5D4F /* Model.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781C5978BD166C8C9F0E32F /* Model.swift */; };
+		AF120FD009AE3FF48512C498 /* Controls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E201DF9826FBF58F0A0C108 /* Controls.swift */; };
+		B411C2B751A10284D038B55D /* Keys.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE6E69435A9132E8E6545002 /* Keys.swift */; };
+		B47C4046BE8F2DECFFEB3B55 /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */; };
+		DA2EC03227A431E614BE9CFF /* ScreenSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491FA8F543B21A286BB40061 /* ScreenSharing.swift */; };
+		EB6E26BDFCC3E5DD599797EF /* FleetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C329FAEED4F1EDF600180595 /* FleetApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		09A0690E82130C7764087497 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		11577105A672148D036E55F3 /* Fleet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fleet.swift; sourceTree = "<group>"; };
+		1B305171705245CC710FE3FD /* HostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostView.swift; sourceTree = "<group>"; };
+		1E201DF9826FBF58F0A0C108 /* Controls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controls.swift; sourceTree = "<group>"; };
+		28AA695414672DE697BA6F49 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		3BB28D64E206265D44338F61 /* ModelActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelActions.swift; sourceTree = "<group>"; };
+		4037D28DBBC954D604FA1685 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
+		491FA8F543B21A286BB40061 /* ScreenSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenSharing.swift; sourceTree = "<group>"; };
+		5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileModel.swift; sourceTree = "<group>"; };
+		5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetMobileApp.swift; sourceTree = "<group>"; };
+		8B53524E43B6752C3CB29043 /* AppIcon.icon */ = {isa = PBXFileReference; path = AppIcon.icon; sourceTree = "<group>"; };
+		A1FBC533AD3B17229A6BB166 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A5876EFC52B99BEE94B76837 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A781C5978BD166C8C9F0E32F /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
 		BB851BD8F45E2DDBD2D07009 /* Fleet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		D17B4E2190C21CCE2552B8BE /* FleetMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; name = FleetMobile.app; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BE6E69435A9132E8E6545002 /* Keys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keys.swift; sourceTree = "<group>"; };
+		C329FAEED4F1EDF600180595 /* FleetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetApp.swift; sourceTree = "<group>"; };
+		C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
+		CDF72A9CE2101390D23744CD /* Fleet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Fleet.entitlements; sourceTree = "<group>"; };
+		CF449911F45F0E24FAB0D2E1 /* SSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSH.swift; sourceTree = "<group>"; };
+		D17B4E2190C21CCE2552B8BE /* FleetMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FleetMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewViews.swift; sourceTree = "<group>"; };
+		F87C6571AAA43C54E273AD9E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
-
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		661AE6C6305CBE8700E5DAE9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = E0C89610D57360EF13CA3790 /* Fleet */;
-		};
-		661AE6C7305CBE8700E5DAE9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				AppIcon.icon,
-			);
-			target = 81EC89848F375350F4F03717 /* FleetMobile */;
-		};
-		661AE6D5305CBE8B00E5DAE9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 81EC89848F375350F4F03717 /* FleetMobile */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		661AE6B8305CBE8600E5DAE9 /* Fleet */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (661AE6C6305CBE8700E5DAE9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, 661AE6C7305CBE8700E5DAE9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Fleet; sourceTree = "<group>"; };
-		661AE6CE305CBE8A00E5DAE9 /* FleetMobile */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (661AE6D5305CBE8B00E5DAE9 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = FleetMobile; sourceTree = "<group>"; };
-		661AE6D7305CBE9000E5DAE9 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Shared; sourceTree = "<group>"; };
-/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		842CA8C07FAF46D469476555 /* Frameworks */ = {
@@ -60,11 +71,19 @@
 		194C210FCEC02863C919EA40 = {
 			isa = PBXGroup;
 			children = (
-				661AE6B8305CBE8600E5DAE9 /* Fleet */,
-				661AE6CE305CBE8A00E5DAE9 /* FleetMobile */,
-				661AE6D7305CBE9000E5DAE9 /* Shared */,
+				A6F761F329465DA98D406499 /* Fleet */,
+				A4F65EAB4B5483962BDF093D /* FleetMobile */,
+				5AE67C17A6351DD70FF940CC /* Shared */,
 				8044FD8A076FDFA8E073FDF1 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		5AE67C17A6351DD70FF940CC /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				28AA695414672DE697BA6F49 /* Models.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		8044FD8A076FDFA8E073FDF1 /* Products */ = {
@@ -74,6 +93,40 @@
 				D17B4E2190C21CCE2552B8BE /* FleetMobile.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A4F65EAB4B5483962BDF093D /* FleetMobile */ = {
+			isa = PBXGroup;
+			children = (
+				5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */,
+				A5876EFC52B99BEE94B76837 /* Info.plist */,
+				BE6E69435A9132E8E6545002 /* Keys.swift */,
+				5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */,
+				CF449911F45F0E24FAB0D2E1 /* SSH.swift */,
+				09A0690E82130C7764087497 /* Views.swift */,
+			);
+			path = FleetMobile;
+			sourceTree = "<group>";
+		};
+		A6F761F329465DA98D406499 /* Fleet */ = {
+			isa = PBXGroup;
+			children = (
+				8B53524E43B6752C3CB29043 /* AppIcon.icon */,
+				A1FBC533AD3B17229A6BB166 /* ContentView.swift */,
+				1E201DF9826FBF58F0A0C108 /* Controls.swift */,
+				CDF72A9CE2101390D23744CD /* Fleet.entitlements */,
+				11577105A672148D036E55F3 /* Fleet.swift */,
+				C329FAEED4F1EDF600180595 /* FleetApp.swift */,
+				1B305171705245CC710FE3FD /* HostView.swift */,
+				F87C6571AAA43C54E273AD9E /* Info.plist */,
+				A781C5978BD166C8C9F0E32F /* Model.swift */,
+				3BB28D64E206265D44338F61 /* ModelActions.swift */,
+				E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */,
+				491FA8F543B21A286BB40061 /* ScreenSharing.swift */,
+				4037D28DBBC954D604FA1685 /* SessionView.swift */,
+				C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */,
+			);
+			path = Fleet;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -90,10 +143,6 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				661AE6CE305CBE8A00E5DAE9 /* FleetMobile */,
-				661AE6D7305CBE9000E5DAE9 /* Shared */,
 			);
 			name = FleetMobile;
 			packageProductDependencies = (
@@ -113,10 +162,6 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				661AE6B8305CBE8600E5DAE9 /* Fleet */,
-				661AE6D7305CBE9000E5DAE9 /* Shared */,
 			);
 			name = Fleet;
 			packageProductDependencies = (
@@ -155,6 +200,7 @@
 			packageReferences = (
 				74C850D78F93023A193346F8 /* XCRemoteSwiftPackageReference "Citadel" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -169,6 +215,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5DC9786A4DDBC3D1C19D8B34 /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -176,6 +223,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				083027A1394959B4F6AA81BE /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -186,6 +234,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4BA18406B33414ACA892B72F /* ContentView.swift in Sources */,
+				AF120FD009AE3FF48512C498 /* Controls.swift in Sources */,
+				2364C83C3A3702025E147576 /* Fleet.swift in Sources */,
+				EB6E26BDFCC3E5DD599797EF /* FleetApp.swift in Sources */,
+				82E09FD38FCCC0D22B04ECBE /* HostView.swift in Sources */,
+				A6DD10F26F51E83C54FD5D4F /* Model.swift in Sources */,
+				4B3BAA071F1B50A35D4BAB96 /* ModelActions.swift in Sources */,
+				58BC2F39725CD537B361D97F /* Models.swift in Sources */,
+				A61CBE0EF3FCF9520D086E85 /* OverviewViews.swift in Sources */,
+				DA2EC03227A431E614BE9CFF /* ScreenSharing.swift in Sources */,
+				24A078877D76CE9EFBF22844 /* SessionView.swift in Sources */,
+				B47C4046BE8F2DECFFEB3B55 /* SettingsViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -193,6 +253,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2550A65E25CC4FF39C7B4EEA /* FleetMobileApp.swift in Sources */,
+				B411C2B751A10284D038B55D /* Keys.swift in Sources */,
+				41E3992484038DE6A874A69C /* MobileModel.swift in Sources */,
+				77685373CB72A52A2D532901 /* Models.swift in Sources */,
+				7AF41430EE88A4658876AB8B /* SSH.swift in Sources */,
+				3F970686C0779DD27C3834C1 /* Views.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

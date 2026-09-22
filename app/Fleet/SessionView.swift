@@ -79,7 +79,7 @@ struct SessionView: View {
                     }
                 } else if showScreenSharing {
                     ActionButton(title: "Screen Sharing", system: "display", tint: .indigo,
-                                 help: "Open Screen Sharing to \(session.host)") { screenShare(session.host) }
+                                 help: "Open Screen Sharing to \(session.host)") { model.screenShare(session.host) }
                         .disabled(model.downReason(for: session.host) != nil)
                 }
                 Spacer()

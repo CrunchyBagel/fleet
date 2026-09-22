@@ -105,6 +105,12 @@ struct HostInfo: Codable, Identifiable, Hashable {
     let sessions: Int
     let score: Int?              // only the fan-out (hosts info) ranks; --info-local has none
     let isSelf: Bool?
+    // How to reach it on its own network (missing from older remotes): the
+    // Bonjour name, the IPv4 of its default-route interface, and whether that
+    // interface is "ethernet" or "wifi" ("" when unknown or a VPN).
+    let lanName: String?
+    let lanIp: String?
+    let lanLink: String?
 
     var id: String { host }
     /// The family name: what the host reports, else read off an older-style
@@ -136,6 +142,9 @@ struct HostInfo: Codable, Identifiable, Hashable {
         case modelName = "model_name"
         case memGB = "mem_gb"
         case isSelf = "self"
+        case lanName = "lan_name"
+        case lanIp = "lan_ip"
+        case lanLink = "lan_link"
     }
 }
 

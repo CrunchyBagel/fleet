@@ -18,7 +18,7 @@ struct HostView: View {
                     .controlSize(.large).help("A login shell on \(host) in \(Terminal.preferred.title)")
                     .disabled(down)
                 if !model.isSelf(host) {
-                    Button { screenShare(host) } label: { Label("Screen Sharing", systemImage: "display") }
+                    Button { model.screenShare(host) } label: { Label("Screen Sharing", systemImage: "display") }
                         .controlSize(.large).help("Open Screen Sharing to \(host)")
                         .disabled(down)
                 }

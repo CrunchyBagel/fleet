@@ -40,11 +40,13 @@ sessions() {
   } | jq -s .
 }
 
+# LAN fields are fictional on purpose: 192.0.2.0/24 is the RFC 5737 documentation
+# range and never routes, so Screen Sharing from the demo can reach nothing real.
 hosts_info() {
   jq -n '{hosts: [
-      {host: "studio", model: "Mac14,14", model_name: "Mac Studio",  chip: "Apple M2 Ultra", cores: 24, pcores: 16, ecores: 8, mem_gb: 128, laptop: false, sessions: 3, score: 96, self: true},
-      {host: "mini",   model: "Mac16,10", model_name: "Mac mini",    chip: "Apple M4",       cores: 10, pcores: 4,  ecores: 6, mem_gb: 32,  laptop: false, sessions: 1, score: 61, self: false},
-      {host: "mbp16",  model: "Mac15,8",  model_name: "MacBook Pro", chip: "Apple M3 Max",   cores: 16, pcores: 12, ecores: 4, mem_gb: 64,  laptop: true,  sessions: 1, score: 78, self: false}],
+      {host: "studio", model: "Mac14,14", model_name: "Mac Studio",  chip: "Apple M2 Ultra", cores: 24, pcores: 16, ecores: 8, mem_gb: 128, laptop: false, sessions: 3, score: 96, self: true,  lan_name: "demo-studio.local", lan_ip: "192.0.2.10", lan_link: "ethernet"},
+      {host: "mini",   model: "Mac16,10", model_name: "Mac mini",    chip: "Apple M4",       cores: 10, pcores: 4,  ecores: 6, mem_gb: 32,  laptop: false, sessions: 1, score: 61, self: false, lan_name: "demo-mini.local",   lan_ip: "192.0.2.11", lan_link: "ethernet"},
+      {host: "mbp16",  model: "Mac15,8",  model_name: "MacBook Pro", chip: "Apple M3 Max",   cores: 16, pcores: 12, ecores: 4, mem_gb: 64,  laptop: true,  sessions: 1, score: 78, self: false, lan_name: "demo-mbp16.local",  lan_ip: "192.0.2.12", lan_link: "wifi"}],
     down: [{host: "air", reason: "offline (Tailscale)"}]}'
 }
 

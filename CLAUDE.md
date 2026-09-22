@@ -134,6 +134,11 @@ whoever runs it.
   `hosts info --json` carries `model` (the identifier, `Mac15,8`) and
   `model_name` (`system_profiler`'s "Model Name", `""` if unknown, absent
   from older remotes); the app picks the sidebar symbol from `model_name`.
+  It also carries `lan_name` (Bonjour `<LocalHostName>.local`), `lan_ip`
+  (IPv4 of the default-route interface) and `lan_link` (`ethernet`, `wifi`,
+  or `""` when the default route is a VPN or unknown), from `lan_info`, all
+  `""` when unknown and absent from older remotes: the app's Screen Sharing
+  uses them.
   For a wrapper app: `projects [host] --json`, `hosts info [host...] --json`,
   and the picker-free `attach <host> <session>` / `open <host> <session>`
   (record_for). `ls` and `hosts info` take host names to ask one host only.
@@ -323,7 +328,8 @@ whoever runs it.
   delegate, menu bar), `ContentView.swift` (window, sidebar rows and menus),
   `OverviewViews.swift`, `HostView.swift` (with the Doctor section),
   `SessionView.swift` (with the New-session sheet), `SettingsViews.swift`,
-  `Controls.swift` (buttons, styles, brand marks), `Model.swift` (state,
+  `Controls.swift` (buttons, styles, brand marks), `ScreenSharing.swift`
+  (address and mode for the vnc:// URL), `Model.swift` (state,
   tree, polling, notifications) and `ModelActions.swift` (what the buttons
   run), `Fleet.swift` (prefs, terminals, the CLI bridge).
 - It is a pure wrapper: `Fleet.swift` is the only file that touches the CLI
@@ -332,7 +338,14 @@ whoever runs it.
   `$FLEET_SELECT` picks the item shown at launch), models mirror the
   JSON schemas verbatim, and every action is a fleet command, except Screen
   Sharing (machine screen, and a remote session's action row), which opens
-  `vnc://<host>` in Screen Sharing.app. The Claude and GitHub buttons draw
+  a `vnc://` URL in Screen Sharing.app (`ScreenSharing.swift`,
+  `FleetModel.screenShare`): the host's `lan_name` and `lan_ip` from `hosts
+  info` are probed on port 5900 (1.5s, `.local` only resolves on the same
+  link) and whichever answers is the address, else the tailnet name; the
+  query `?quality=high|adaptive&numVirtualDisplays=0` is Screen Sharing's
+  own .vncloc URL format and presets High Performance (only when the LAN
+  answered and both Macs report `lan_link` ethernet and an Apple chip) or
+  Standard, so its mode chooser does not come up. The Claude and GitHub buttons draw
   the real marks: SVG path data from Simple Icons (CC0) in `Brand`, drawn
   by `SVGShape` (lines and cubics only, no assets). Action buttons are icon over caption
   with a shared minimum width (`FilledStyle`) so the row never wraps; there
