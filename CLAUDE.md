@@ -121,7 +121,8 @@ whoever runs it.
   `models [host] [--json]` (`models_local` on the host) = what Claude Code
   there can start with: `{default, models: [{id, name, short_name,
   section}]}` plus `host` in the `--json` form. There is no `claude models`;
-  the list is the freshest `surface: ccd` file in
+  the list is the freshest `surface: cc` (the CLI's) or `ccd` (desktop
+  app's, absent on a Mac without it) file in
   `~/.claude/cache/model-catalog/` (`section` main = the picker, overflow =
   older versions) and `default` is `model` from `~/.claude/settings.local.json`
   else `settings.json`, its `[1m]` suffix dropped; both `""`/`[]` when

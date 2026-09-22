@@ -391,6 +391,9 @@ printf '{"fetchedAt":3,"catalog":{"surface":"web","config":{"models":[{"id":"not
 printf 'garbage' > "$T/home/.claude/cache/model-catalog/broken.json"
 assert_eq "models --local: freshest ccd catalog, other surfaces and garbage ignored" \
   "$(run models --local | jq -c '[.models[].id]')" '["claude-fable-5-1","claude-opus-4-8"]'
+printf '{"fetchedAt":4,"catalog":{"surface":"cc","config":{"models":[{"id":"claude-opus-5-5","name":"Opus 5.5","short_name":"Opus","section":"main"}]}}}' > "$T/home/.claude/cache/model-catalog/org-cc.json"
+assert_eq "models --local: the CLI's cc catalog counts too (no desktop app)" \
+  "$(run models --local | jq -c '[.models[].id]')" '["claude-opus-5-5"]'
 assert_eq "models: no model in settings = no default"  "$(run models --local | jq -r .default)" ""
 printf '{"model":"claude-fable-5-1[1m]"}' > "$T/home/.claude/settings.json"
 assert_eq "models: settings model without its [1m] suffix" "$(run models --local | jq -r .default)" "claude-fable-5-1"

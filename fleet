@@ -990,8 +990,10 @@ cmd_projects() {   # fleet projects [host] [--all] [--json]; --all includes fold
 # The models Claude Code on THIS machine can start with, and the one it starts
 # with when not told: JSON {"default": id|"", "models": [{id, name, short_name,
 # section}]}. There is no `claude models`; the list is the model catalog Claude
-# Code caches under ~/.claude/cache/model-catalog (the freshest file for its
-# own surface, "ccd"; main = the picker, overflow = older versions) and the
+# Code caches under ~/.claude/cache/model-catalog (the freshest file for a
+# Claude Code surface: "cc" is the CLI's own, "ccd" the desktop app's, which
+# a Mac without the app never writes; main = the picker, overflow = older
+# versions) and the
 # default is `model` in ~/.claude/settings(.local).json without a "[1m]"
 # context suffix. Both "" / [] when unknown: the caller then offers
 # "Automatic" only and passes no --model, which is Claude Code's own choice.
@@ -1001,7 +1003,7 @@ models_local() {
     # One jq per file: a file that is not JSON must not take the others down.
     models=$(for f in "$dir"/*.json; do
         [ -f "$f" ] || continue
-        jq -c 'select(type == "object" and .catalog.surface? == "ccd" and (.catalog.config.models? | type) == "array")' "$f" 2>/dev/null || true
+        jq -c 'select(type == "object" and (.catalog.surface? == "cc" or .catalog.surface? == "ccd") and (.catalog.config.models? | type) == "array")' "$f" 2>/dev/null || true
       done | jq -sc '(max_by(.fetchedAt // 0).catalog.config.models // [])
         | map(select(.id | type == "string"))
         | map({id: .id, name: (.name // .id), short_name: (.short_name // ""), section: (.section // "main")})' 2>/dev/null) || models='[]'
