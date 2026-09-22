@@ -251,22 +251,33 @@ struct NewSessionSheet: View {
                     if p.claude { Text("claude").foregroundStyle(.secondary).font(.caption).padding(.horizontal, 5).background(.quaternary, in: Capsule()) }
                 }
                 .tag(p.project)
-                .contentShape(Rectangle())
-                // A double-click starts the session, as Enter does; simultaneous so a single click still selects.
-                .simultaneousGesture(TapGesture(count: 2).onEnded { project = p.project; start(project: p.project) })
             }
             .frame(height: 180)
+            // A double-click starts the session, as Enter does. This is the
+            // List's own double-click hook: a tap gesture on the rows would
+            // take the click before the List selects, so a single click no
+            // longer highlighted.
+            .contextMenu(forSelectionType: String.self) { _ in } primaryAction: { ids in
+                if let p = ids.first { project = p; start(project: p) }
+            }
             .overlay {
                 if loading { ProgressView("Listing projects on \(host)…").controlSize(.small) }
                 else if shown.isEmpty { Text("No project matches").foregroundStyle(.secondary) }
             }
             TextField("Session name (empty = main)", text: $name).textFieldStyle(.roundedBorder)
             Toggle("Open in \(Terminal.preferred.title) when ready", isOn: $attach)
-            if let status {
-                HStack(spacing: 8) { ProgressView().controlSize(.small); Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
-            } else if let failure {
-                Text(failure).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+            // Always laid out, two lines tall, so the sheet does not grow
+            // when starting begins; only a long error makes it taller.
+            Group {
+                if let status {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
+                } else if let failure {
+                    Text(failure).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                } else {
+                    Color.clear
+                }
             }
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(status != nil)
