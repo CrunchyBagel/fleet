@@ -77,6 +77,7 @@ build_root() {
 
 make_origin alpha main
 make_origin legacy master
+make_origin gamma main
 build_root "$T/root"
 mkdir -p "$T/root with space"; build_root "$T/root with space"
 
@@ -90,6 +91,12 @@ git -C "$T/rootR/plainR" add -A; git -C "$T/rootR/plainR" commit -qm "remote wor
 printf 'FLEET_HOSTS="laptop studio"\nFLEET_SELF="studio"\nFLEET_ROOT="%s"\nFLEET_STATE="%s"\n' "$T/rootR" "$RH/.local/state/fleet" > "$RH/.config/fleet/config"
 printf '%s\nplainR\n' "$T/rootR/plainR" > "$RH/.local/state/fleet/sessions/plainR-main"   # a session running there
 git clone -q "$T/origins/alpha.git" "$T/root/plainR"                                     # laptop has the same project, on main
+# The same repo under different directory names: rowingR on studio, simulatorL here.
+git clone -q "$T/origins/gamma.git" "$T/rootR/rowingR"
+git -C "$T/rootR/rowingR" checkout -q -b feature/oars; echo oars > "$T/rootR/rowingR/oars.txt"
+git -C "$T/rootR/rowingR" add -A; git -C "$T/rootR/rowingR" commit -qm "oars"; git -C "$T/rootR/rowingR" push -q -u origin feature/oars
+printf '%s\nrowingR\n' "$T/rootR/rowingR" > "$RH/.local/state/fleet/sessions/rowingR-main"
+git clone -q "$T/origins/gamma.git" "$T/root/simulatorL"
 
 mkdir -p "$T/noconf" "$T/home" "$T/state"
 export SHIM_LOG="$T/shim.log"
@@ -275,6 +282,9 @@ assert_contains "FLEET_OPEN=finder opens the folder"                   "$(cat "$
 assert_contains "auto with no Xcode project falls back to Finder"      "$(cat "$SHIM_LOG")" "open $T/root/plainR"
 mkdir -p "$T/root/plain/Plain.xcworkspace"; : > "$SHIM_LOG"; renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- open laptop plain-main >/dev/null 2>&1
 assert_contains "a workspace at the root wins over a nested project" "$(cat "$SHIM_LOG")" "xed $T/root/plain/Plain.xcworkspace"
+O=$(renv FLEET_HOSTS="laptop studio" "FAKE_TMUX_SESSIONS=plainR-main rowingR-main" -- open studio rowingR-main 2>&1)
+assert_contains "open finds the local clone by origin when the directory name differs" "$O" "no rowingR here, using simulatorL"
+assert_eq "  ...and switches it to the remote's branch"  "$(git -C "$T/root/simulatorL" rev-parse --abbrev-ref HEAD)" "feature/oars"
 assert_contains "open refuses a detached row"           "$(run open laptop alpha-det 2>&1 || true)" "detached"
 
 # ---------------------------------------------------------------- reap

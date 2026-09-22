@@ -137,7 +137,10 @@ not report and shows as `◦ alive`.
 ## Opening a checkout
 
 `fleet open` fetches the session's branch into the local clone (or a local
-worktree), fast-forwards, and opens it. What it opens it in is `FLEET_OPEN`
+worktree), fast-forwards, and opens it. The local clone is the directory
+of the same name under `FLEET_ROOT`, or failing that the one clone there
+with the same origin, so a repo may sit under different directory names on
+different Macs. What it opens it in is `FLEET_OPEN`
 in the config: `auto` (the default) means Xcode when the checkout has a
 workspace or project and Xcode is installed, else the folder in Finder;
 `xcode` or `finder` force one; anything else is a command or app given the

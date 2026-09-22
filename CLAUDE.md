@@ -101,6 +101,12 @@ whoever runs it.
   refuses and `ls` shows `no upstream`. `fleet status` never fetches, so
   ahead/behind reflect the last fetch on that host.
 - Per-worktree DerivedData lives in `<worktree>/.build` (globally gitignored).
+- `open` finds the local clone by the record's `project` name, else by its
+  `remote` (`project_for_remote`: the one clone under FLEET_ROOT whose origin
+  is the same repo, `repo_key` = lowercase owner/name whatever the URL
+  shape; two matches = no guess), because the same repo can sit under
+  different directory names on different Macs. `pick`/`record_for` rows carry
+  the origin URL as their last column for this.
 - `open` ends in `open_checkout`, driven by FLEET_OPEN (`auto` default):
   `auto` = xcode when `xed` exists and `xcode_target` finds a workspace or
   project (at the repo root or one level down, many repos nest

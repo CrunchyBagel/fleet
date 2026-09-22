@@ -228,6 +228,29 @@ project_repo() {     # $1 project -> path of its primary clone, or fail
   elif [ -e "$FLEET_ROOT/$1/.git" ];      then echo "$FLEET_ROOT/$1"
   else return 1; fi
 }
+# repo_key <origin url> -> owner/name, lowercase, so https://github.com/O/N.git,
+# git@github.com:O/N and ssh://git@github.com/O/N.git all compare equal.
+repo_key() {
+  local u="${1%/}"; u="${u%.git}"; u="${u##*:}"
+  case "$u" in */*/*) u="${u#*://}"; u="${u#*/}" ;; esac   # drop scheme and host: only the last two components matter
+  case "$u" in */*/*) u="${u#"${u%/*/*}"/}" ;; esac
+  printf '%s' "$u" | tr '[:upper:]' '[:lower:]'
+}
+# project_for_remote <origin url> -> the project under FLEET_ROOT whose origin
+# is that repo, when there is exactly one; another machine may keep the same
+# repo in a directory with a different name.
+project_for_remote() {
+  local want d p r found=""
+  want=$(repo_key "$1"); [ -n "$want" ] || return 1
+  for d in "$FLEET_ROOT"/*/; do
+    p=$(basename "$d"); r=$(project_repo "$p") || continue
+    r=$(git -C "$r" remote get-url origin 2>/dev/null) || continue
+    [ "$(repo_key "$r")" = "$want" ] || continue
+    [ -z "$found" ] || return 1           # two local clones of it: do not guess
+    found="$p"
+  done
+  [ -n "$found" ] && printf '%s\n' "$found"
+}
 project_layout() {   # $1 project -> container | worktrees | plain | dir
   if   [ -e "$FLEET_ROOT/$1/main/.git" ]; then echo container
   elif [ -e "$FLEET_ROOT/$1/.git" ]; then
@@ -589,7 +612,7 @@ cmd_ls() {
 # fzf shows the padded display columns (tabs would not line up) and matches
 # only the project name (--nth=1 with a 2+-space/tab delimiter).
 stream_rows() {   # $1 dir: rows for each host's json as it appears, until all hosts are in
-  local seen="" h n total=0 host project name branch session path state
+  local seen="" h n total=0 host project name branch session path state worktree att remote
   for h in $FLEET_HOSTS; do total=$((total + 1)); done
   n=0
   while [ "$n" -lt "$total" ]; do
@@ -598,11 +621,15 @@ stream_rows() {   # $1 dir: rows for each host's json as it appears, until all h
       [ -e "$1/$h.json" ] || continue
       seen="$seen $h"; n=$((n + 1))
       jq -r --arg me "$FLEET_SELF" "$2"' | .[] | [.host,.project,.name,.branch,.session,.path,.state,(.worktree // false | tostring),
-            ((.attached_from // []) as $a | if ($a | index($me)) then "◉ attached here" elif ($a | length) > 0 then "◉ attached: " + ($a | join(" ")) else "" end)] | @tsv' "$1/$h.json" 2>/dev/null \
-      | while IFS=$'\t' read -r host project name branch session path state worktree att; do
-          printf '%s  %s  %s  %s  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            ((.attached_from // []) as $a | if ($a | index($me)) then "◉ attached here" elif ($a | length) > 0 then "◉ attached: " + ($a | join(" ")) else "" end),
+            (.remote // "")] | @tsv' "$1/$h.json" 2>/dev/null \
+      | while IFS=$'\t' read -r host project name branch session path state worktree att remote; do
+          # att is the only column that can be empty before the last, so it is read
+          # together with remote: with no attachment the tab shifts remote into att.
+          case "$att" in ◉*) ;; *) remote="$att"; att="" ;; esac
+          printf '%s  %s  %s  %s  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$(pad "$project" 24)" "$(pad "$name" 20)" "$(pad "$host" 10)" "$(pad "$(badge_text "$state")" 13)" "${DIM}${att}${RESET}" \
-            "$host" "$project" "$name" "$branch" "$session" "$path" "$state" "$worktree"
+            "$host" "$project" "$name" "$branch" "$session" "$path" "$state" "$worktree" "$remote"
         done
     done
     [ "$n" -lt "$total" ] && sleep 0.1
@@ -799,7 +826,7 @@ record_for() {
   trap 'rm -rf "${tmp:-}"' RETURN
   host_status "$h" "$tmp" "$mode"
   line=$(jq -r --arg s "$sess" '.[] | select(.session == $s)
-           | [.host,.project,.name,.branch,.session,.path,.state,(.worktree // false | tostring)] | @tsv' "$tmp/$h.json" 2>/dev/null | head -1)
+           | [.host,.project,.name,.branch,.session,.path,.state,(.worktree // false | tostring),(.remote // "")] | @tsv' "$tmp/$h.json" 2>/dev/null | head -1)
   if [ -z "$line" ]; then
     [ -e "$tmp/$h.down" ] && die "$h: $(cat "$tmp/$h.down")"
     die "no session '$sess' on $h   (fleet ls $h)"
@@ -811,14 +838,14 @@ record_for() {
 cmd_attach() {
   if [ $# -ge 2 ]; then
     local sel; sel=$(record_for "$1" "$2" "") || return 1
-    IFS=$'\t' read -r _ host project name branch session path state _ <<< "$sel"
+    IFS=$'\t' read -r _ host project name branch session path state _ _ <<< "$sel"
     launch_term "$host" "$session" "$path"
     return 0
   fi
   # Only sessions fleet started; anything else has no tmux session to attach to.
   local sel; sel=$(pick "" "${1:-}") || return 1
   [ -z "$sel" ] && return 1
-  IFS=$'\t' read -r _ host project name branch session path state _ <<< "$sel"
+  IFS=$'\t' read -r _ host project name branch session path state _ _ <<< "$sel"
   launch_term "$host" "$session" "$path"
 }
 
@@ -857,7 +884,7 @@ cmd_kill() {
   if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then yes=1; shift; fi
   [ $# -ge 2 ] || die "usage: fleet kill [-y] <host> <session>"
   sel=$(record_for "$1" "$2" "") || return 1
-  IFS=$'\t' read -r _ host project name branch session path state _ <<< "$sel"
+  IFS=$'\t' read -r _ host project name branch session path state _ _ <<< "$sel"
   if [ "$yes" != 1 ]; then
     [ -t 0 ] || die "refusing to end $session on $host without -y"
     printf 'end %s on %s (%s)? the agent is asked to exit, then the session is closed. [y/N] ' "$session" "$host" "$state"
@@ -1141,11 +1168,19 @@ cmd_open() {
   if [ $# -ge 2 ]; then sel=$(record_for "$1" "$2" --all) || return 1
   else sel=$(pick --all "${1:-}") || return 1; fi
   [ -z "$sel" ] && return 1
-  IFS=$'\t' read -r _ host project name branch session path state worktree <<< "$sel"
+  IFS=$'\t' read -r _ host project name branch session path state worktree remote <<< "$sel"
   [ "$branch" = "(detached)" ] && die "$project/$name on $host is detached, nothing to pull"
 
-  local mainrepo dir
-  mainrepo=$(project_repo "$project") || die "no local clone for $project under $FLEET_ROOT"
+  # The local clone is the directory of the same name, else the one clone
+  # under FLEET_ROOT with the same origin: the same repo can live under
+  # different directory names on different Macs.
+  local mainrepo dir other
+  if ! mainrepo=$(project_repo "$project"); then
+    other=$(project_for_remote "${remote:-}") \
+      || die "no local clone for $project under $FLEET_ROOT${remote:+ (origin $remote)}"
+    printf '%s  no %s here, using %s (same origin)%s\n' "$DIM" "$project" "$other" "$RESET"
+    project="$other"; mainrepo=$(project_repo "$project")
+  fi
   if [ "$worktree" != true ]; then dir="$mainrepo"   # a session in the repo itself
   else enable_worktrees "$mainrepo"; dir=$(worktree_path "$project" "$name"); fi
 
