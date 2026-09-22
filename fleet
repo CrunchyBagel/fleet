@@ -987,6 +987,46 @@ cmd_projects() {   # fleet projects [host] [--all] [--json]; --all includes fold
         { printf "%s%-28s%s %-7s %s\n", ($3=="yes"?B:""), $1, R, $2, ($3=="yes"?"yes":D "no" R) }'
 }
 
+# The models Claude Code on THIS machine can start with, and the one it starts
+# with when not told: JSON {"default": id|"", "models": [{id, name, short_name,
+# section}]}. There is no `claude models`; the list is the model catalog Claude
+# Code caches under ~/.claude/cache/model-catalog (the freshest file for its
+# own surface, "ccd"; main = the picker, overflow = older versions) and the
+# default is `model` in ~/.claude/settings(.local).json without a "[1m]"
+# context suffix. Both "" / [] when unknown: the caller then offers
+# "Automatic" only and passes no --model, which is Claude Code's own choice.
+models_local() {
+  local dir="$HOME/.claude/cache/model-catalog" f models='[]' default=''
+  if [ -d "$dir" ]; then
+    # One jq per file: a file that is not JSON must not take the others down.
+    models=$(for f in "$dir"/*.json; do
+        [ -f "$f" ] || continue
+        jq -c 'select(type == "object" and .catalog.surface? == "ccd" and (.catalog.config.models? | type) == "array")' "$f" 2>/dev/null || true
+      done | jq -sc '(max_by(.fetchedAt // 0).catalog.config.models // [])
+        | map(select(.id | type == "string"))
+        | map({id: .id, name: (.name // .id), short_name: (.short_name // ""), section: (.section // "main")})' 2>/dev/null) || models='[]'
+    [ -n "$models" ] || models='[]'
+  fi
+  for f in "$HOME/.claude/settings.local.json" "$HOME/.claude/settings.json"; do
+    [ -f "$f" ] || continue
+    default=$(jq -r '(.model // "") | if type == "string" then sub("\\[[^]]*\\]$"; "") else "" end' "$f" 2>/dev/null) || default=''
+    [ -z "$default" ] || break
+  done
+  jq -nc --arg default "$default" --argjson models "$models" '{default: $default, models: $models}'
+}
+
+cmd_models() {   # fleet models [host] [--json]: what Claude Code there can start with
+  local host="$FLEET_SELF" json=0 a out
+  for a in "$@"; do
+    case "$a" in --local) models_local; return 0 ;; --json) json=1 ;; *) host="$a" ;; esac
+  done
+  out=$(run_on "$host" 'fleet models --local') || die "could not list models on $host (fleet doctor $host)"
+  if [ "$json" = 1 ]; then printf '%s\n' "$out" | jq -c --arg host "$host" '. + {host: $host}'; return 0; fi
+  printf '%s\n' "$out" | jq -r '.default as $d | (if $d == "" then "default: Claude Code decides" else "default: \($d)" end),
+      (.models[] | [(if .id == $d then "*" else " " end), .id, .name, .section] | @tsv)' \
+    | awk -F '\t' -v D="$DIM" -v R="$RESET" 'NR == 1 { print; next } { printf "%s %-28s %-12s %s%s%s\n", $1, $2, $3, D, $4, R }'
+}
+
 # ---------------------------------------------------------------- new
 
 # tmux status line for a fleet session: the machine you are on, then the
@@ -1005,8 +1045,9 @@ brand_session() {
 #   new_local <project>          session in the clone itself (any layout)
 #   new_local <project> <task>   worktree + branch agent/<task>; the project
 #                                must be converted (or in container layout)
+#   new_local <project> <task> <model>   ... and `claude --model <model>`
 new_local() {
-  local project="$1" task="${2:-}" main layout dir branch base session
+  local project="$1" task="${2:-}" model="${3:-}" main layout dir branch base session
   need git; need tmux; need claude
   main=$(project_repo "$project") || die "no clone for $project under $FLEET_ROOT"
   layout=$(project_layout "$project")
@@ -1040,8 +1081,9 @@ new_local() {
     # label carries the machine; the tmux session and fleet's records do not.
     # --remote-control makes it reachable from claude.ai/code and the mobile
     # app, --permission-mode auto starts it in auto mode. FLEET_CLAUDE_ARGS in
-    # the config changes the flags per machine.
-    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS" Enter
+    # the config changes the flags per machine. --model only when asked
+    # (fleet new --model), so Claude Code's own default applies otherwise.
+    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS${model:+ --model $(shq "$model")}" Enter
   fi
   brand_session "$session" "$FLEET_SELF"
   register_session "$session" "$dir" "$project"
@@ -1054,14 +1096,23 @@ new_local() {
 # name. A plain project just gets a session in its clone. The host does the
 # work via `fleet new --local`, so its own FLEET_ROOT applies.
 cmd_new() {
+  # --model <m> anywhere (an alias like opus or a full id from `fleet models`):
+  # the model the new session starts with; without it Claude Code picks.
+  local model="" rest=() want=0 a
+  for a in "$@"; do
+    if [ "$want" = 1 ]; then model="$a"; want=0; continue; fi
+    case "$a" in --model) want=1 ;; --model=*) model="${a#--model=}" ;; *) rest+=("$a") ;; esac
+  done
+  [ "$want" = 0 ] || die "--model needs a value (fleet models lists them)"
+  set -- ${rest[@]+"${rest[@]}"}
   if [ "${1:-}" = "--local" ]; then
     shift
-    [ -n "${1:-}" ] || die "usage: fleet new --local <project> [task] [--init]"
+    [ -n "${1:-}" ] || die "usage: fleet new --local <project> [task] [--init] [--model <m>]"
     case " $* " in *" --init "*)
       [ -e "$FLEET_ROOT/$1/.git" ] || git -C "$FLEET_ROOT/$1" init -q >/dev/null 2>&1 || die "git init failed in $FLEET_ROOT/$1" ;;
     esac
     set -- "${@/--init/}"
-    new_local "$1" "${2:-}"
+    new_local "$1" "${2:-}" "$model"
     return 0
   fi
   # fleet new [host] [project] [task]: a first argument that is a known host
@@ -1128,7 +1179,7 @@ cmd_new() {
       fi ;;
   esac
   # shellcheck disable=SC2016  # the single quotes are for the remote shell
-  dir=$(run_on "$host" "fleet new --local $(shq "$project")${task:+ $(shq "$task")}${init:+ $init}") || die "fleet new failed on $host"
+  dir=$(run_on "$host" "fleet new --local $(shq "$project")${task:+ $(shq "$task")}${init:+ $init}${model:+ --model $(shq "$model")}") || die "fleet new failed on $host"
   if [ "$noattach" = 1 ]; then
     printf '%s\t%s\t%s\n' "$host" "$(session_name "$project" "${task:-main}")" "$dir"
     return 0
@@ -2122,9 +2173,11 @@ fleet - Claude Code agent worktrees across your Macs
   fleet shell  [host] [dir]       a login shell on that Mac (in dir), here or in a FLEET_TERM window
   fleet kill [-y] <host> <session>
                                   end a session: its tmux session and the agent in it (-y: no prompt)
-  fleet new [host] [project] [task] [--all] [--no-attach]
+  fleet new [host] [project] [task] [--all] [--no-attach] [--model <m>]
                                   pick a folder on that host (default: here) and start a session in
-                                  it; a name adds a session there, or a worktree once converted
+                                  it; a name adds a session there, or a worktree once converted;
+                                  --model: which Claude model (default: Claude Code's own choice)
+  fleet models [host] [--json]    the models Claude Code there can start with, and its default
   fleet projects [host] [--all] [--json]
                                   repos under FLEET_ROOT there, Claude-used first
                                   (--all: also folders that are not repos yet)
@@ -2160,6 +2213,7 @@ case "$cmd" in
   kill|stop) cmd_kill "$@" ;;
   new|n)    cmd_new "$@" ;;
   projects|p) cmd_projects "$@" ;;
+  models)   cmd_models "$@" ;;
   convert)  cmd_convert "$@" ;;
   reap)     cmd_reap ;;
   hosts)    cmd_hosts "$@" ;;

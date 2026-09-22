@@ -178,6 +178,29 @@ struct HostsInfo: Codable { let hosts: [HostInfo]; let down: [HostDown] }
 struct ProjectEntry: Codable, Hashable { let project: String; let layout: String; let claude: Bool; let path: String; let remote: String }
 struct ProjectsList: Codable { let host: String; let projects: [ProjectEntry] }
 
+/// `fleet models <host> --json`: what Claude Code there can start with.
+/// `section` is "main" (its picker) or "overflow" (older versions);
+/// `defaultModel` is the id or alias its settings name, "" when Claude Code
+/// decides on its own.
+struct ModelEntry: Codable, Hashable {
+    let id: String, name: String, shortName: String, section: String
+    enum CodingKeys: String, CodingKey { case id, name, section; case shortName = "short_name" }
+}
+struct ModelsList: Codable {
+    let host: String, defaultModel: String, models: [ModelEntry]
+    enum CodingKeys: String, CodingKey { case host, models; case defaultModel = "default" }
+    static let unknown = ModelsList(host: "", defaultModel: "", models: [])
+    /// The catalog entry the default names: by id, or by alias ("opus" ->
+    /// the first claude-opus-* in the main section, which is the latest).
+    var resolvedDefault: ModelEntry? {
+        let d = defaultModel.lowercased()
+        guard !d.isEmpty else { return nil }
+        if let m = models.first(where: { $0.id.lowercased() == d }) { return m }
+        let ordered = models.filter { $0.section == "main" } + models.filter { $0.section != "main" }
+        return ordered.first { $0.id.lowercased().hasPrefix("claude-\(d)-") || $0.shortName.lowercased() == d }
+    }
+}
+
 /// The account's usage limits: one account across the fleet, so the freshest
 /// status line snapshot on any host is the answer.
 struct UsageLimits {
@@ -224,4 +247,26 @@ extension Session {
     }
     /// "MyApp" for the main session, "MyApp · review" for a named one.
     var title: String { name == "main" ? project : "\(project) · \(name)" }
+
+    /// The model family as a tag: "FABLE" from "Fable 5.1", "OPUS" from
+    /// "Claude Opus 5". Version dropped on purpose; nil without a snapshot.
+    /// Exists so a costly model is visible at a glance in the sidebar.
+    var modelFamily: String? {
+        guard let m = model, !m.isEmpty else { return nil }
+        let words = m.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map { String($0) }
+        let known = ["fable", "mythos", "opus", "sonnet", "haiku"]
+        if let w = words.first(where: { known.contains($0.lowercased()) }) { return w.uppercased() }
+        // Unknown family: the first word that is not just "Claude" or a version.
+        return words.first(where: { $0.lowercased() != "claude" && $0.first?.isLetter == true })?.uppercased()
+    }
+    /// One colour per family so the tags tell apart without reading.
+    var modelColor: Color {
+        switch modelFamily {
+        case "FABLE", "MYTHOS": return .purple
+        case "OPUS": return .indigo
+        case "SONNET": return .teal
+        case "HAIKU": return .green
+        default: return .gray
+        }
+    }
 }

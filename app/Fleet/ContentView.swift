@@ -193,7 +193,7 @@ struct SessionRow: View {
                 StateDot(session: session)
                 Text(session.title)
                 Spacer()
-                if let w = session.waiting { Text(w).font(.caption).foregroundStyle(.orange) }
+                ModelTag(session: session)
                 if !session.attachedFrom.isEmpty { Image(systemName: "rectangle.connected.to.line.below").foregroundStyle(.secondary).help("attached: \(session.attachedFrom.joined(separator: ", "))") }
             }
             // Always a second line: the List caches row heights, and a row that

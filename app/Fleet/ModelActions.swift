@@ -10,6 +10,11 @@ extension FleetModel {
             catch { lastError = "projects on \(host): \(error.localizedDescription)" }
         }
     }
+    /// The models the host's Claude Code offers and its default, for the
+    /// New-session sheet's picker. Never an error: unknown means Automatic only.
+    func loadModels(on host: String) {
+        Task { models[host] = await FleetCLI.models(on: host) }
+    }
 
     // Actions surface errors in the window rather than failing silently.
     func perform(_ what: String, _ op: @escaping () async throws -> Void) {
@@ -49,11 +54,11 @@ extension FleetModel {
     }
     /// Start a session (`fleet new --no-attach`, then attach when asked),
     /// telling `status` what stage it is at; throws so the sheet can show why.
-    func newSession(host: String, project: String, name: String?, thenAttach: Bool,
+    func newSession(host: String, project: String, name: String?, model: String? = nil, thenAttach: Bool,
                     status: @escaping (String) -> Void) async throws {
         let t = Terminal.preferred
         status("Starting \(project) on \(host): creating the tmux session and launching Claude Code…")
-        let (h, sess, _) = try await FleetCLI.newSession(host: host, project: project, name: name)
+        let (h, sess, _) = try await FleetCLI.newSession(host: host, project: project, name: name, model: model)
         if thenAttach {
             status("Opening \(sess) in \(t.title)…")
             try await FleetCLI.attach(host: h, session: sess, terminal: t)

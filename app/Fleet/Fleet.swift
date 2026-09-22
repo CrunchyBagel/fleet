@@ -178,6 +178,11 @@ struct FleetCLI {
     static func projects(on host: String) async throws -> ProjectsList {
         try await decode(ProjectsList.self, from: run(["projects", host, "--json"]))
     }
+    /// `fleet models <host> --json`; a host running an older fleet has no
+    /// such command, which counts as "unknown" (Automatic only), not an error.
+    static func models(on host: String) async -> ModelsList {
+        (try? await decode(ModelsList.self, from: run(["models", host, "--json"]))) ?? .unknown
+    }
 
     // The actions. Attach goes through FLEET_TERM: fleet raises that terminal's
     // window for the session if one is open, else opens a new one.
@@ -219,8 +224,9 @@ struct FleetCLI {
         try await run(["hosts", "rm", name], tolerate: true)
     }
     /// Create (or reuse) a session without attaching; returns (host, session, dir).
-    static func newSession(host: String, project: String, name: String?) async throws -> (String, String, String) {
+    static func newSession(host: String, project: String, name: String?, model: String? = nil) async throws -> (String, String, String) {
         var args = ["new", host, project]; if let n = name, !n.isEmpty { args.append(n) }; args.append("--no-attach")
+        if let m = model, !m.isEmpty { args += ["--model", m] }
         let parts = try await run(args).trimmingCharacters(in: .newlines).split(separator: "\t").map(String.init)
         guard parts.count == 3 else { throw FleetError.failed(command: "fleet new", status: 1, stderr: "unexpected output") }
         return (parts[0], parts[1], parts[2])

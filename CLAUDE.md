@@ -117,7 +117,17 @@ whoever runs it.
   fast-forwarding, opening) as dim lines; the app streams those into the
   session view while the button is busy.
 - Commands: `ls` (default), `attach|a`, `open|o`, `new|n`, `projects|p`,
-  `shell`, `kill|stop`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models`, `shell`, `kill|stop`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models [host] [--json]` (`models_local` on the host) = what Claude Code
+  there can start with: `{default, models: [{id, name, short_name,
+  section}]}` plus `host` in the `--json` form. There is no `claude models`;
+  the list is the freshest `surface: ccd` file in
+  `~/.claude/cache/model-catalog/` (`section` main = the picker, overflow =
+  older versions) and `default` is `model` from `~/.claude/settings.local.json`
+  else `settings.json`, its `[1m]` suffix dropped; both `""`/`[]` when
+  unknown. `new ... --model <m>` (anywhere on the line, alias or id) appends
+  `--model <m>` to the claude command; without it nothing is passed, so
+  Claude Code's own default (including a `[1m]` variant) applies.
   `keys add "<openssh line>"` (validated to one `<type> <base64> [comment]`
   line, `valid_pubkey`) appends to `~/.ssh/authorized_keys` here and on every
   reachable host via `keys_script` (umask 077, idempotent); `keys rm

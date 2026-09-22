@@ -6,11 +6,11 @@
 set -euo pipefail
 now=$(date +%s)
 
-row() {  # host project name branch state subject dirty ahead age worktree prompt note said ctx
+row() {  # host project name branch state subject dirty ahead age worktree prompt note said ctx [model]
   jq -n --arg host "$1" --arg project "$2" --arg name "$3" --arg branch "$4" --arg state "$5" \
     --arg subject "$6" --argjson dirty "$7" --argjson ahead "$8" --argjson t "$((now - $9))" \
     --argjson worktree "${10}" --arg prompt "${11}" --arg note "${12}" --arg said "${13}" \
-    --argjson ctx "${14}" --argjson now "$now" '
+    --argjson ctx "${14}" --arg model "${15:-Opus 5}" --argjson now "$now" '
     ($project | ascii_downcase) as $p
     | {host: $host, project: $project, name: $name,
        path: ("/Users/you/code/" + $project + (if $worktree then "/.claude/worktrees/" + $name else "" end)),
@@ -19,7 +19,7 @@ row() {  # host project name branch state subject dirty ahead age worktree promp
        managed: true, activity: $t, worktree: $worktree,
        remote: ("git@github.com:example/" + $p + ".git"),
        claude_session: ("session_01demo" + $p + $name), attached_from: [],
-       prompt: $prompt, note: $note, said: $said, model: "Opus 5", context_pct: $ctx, cost_usd: 0,
+       prompt: $prompt, note: $note, said: $said, model: $model, context_pct: $ctx, cost_usd: 0,
        limit_5h: 23, limit_5h_reset: ($now + 9000), limit_7d: 41, limit_7d_reset: ($now + 260000),
        stats_ts: ($now - 30)}'
 }
@@ -30,12 +30,12 @@ sessions() {
       "Fix the login crash from the latest crash report and add a regression test" "" "" 34
     row studio MyApp sync agent/sync blocked "Add CloudKit zone migration" true 2 840 true \
       "Move sync over to the new CloudKit zone, keeping old installs working" \
-      "Permission to run: xcodebuild test -scheme MyApp" "" 58
+      "Permission to run: xcodebuild test -scheme MyApp" "" 58 "Fable 5.1"
     row studio Website main main "done" "Rewrite the pricing page" false 3 2400 false \
       "Rewrite the pricing page around the new yearly plan" "" \
       "The pricing page is rewritten and pushed. All 42 tests pass; the old monthly table is gone and the FAQ links to the new plan." 21
     row mini MyApp release release/3.2 running "Bump build number to 412" false 1 45 true \
-      "Cut the 3.2 release branch, bump the build and write the release notes" "" "" 12
+      "Cut the 3.2 release branch, bump the build and write the release notes" "" "" 12 "Sonnet 5"
     row mbp16 Backend main main idle "Add rate limiting to the export endpoint" false 0 86400 false "" "" "" -1
   } | jq -s .
 }
@@ -61,6 +61,12 @@ case "${1:-} ${2:-}" in
   "projects "*)    jq -n --arg h "$2" '{host: $h, projects: [
                      {project: "MyApp", layout: "worktrees", claude: true, path: "/Users/you/code/MyApp", remote: ""},
                      {project: "Website", layout: "plain", claude: true, path: "/Users/you/code/Website", remote: ""}]}' ;;
+  "models "*)      jq -n --arg h "$2" '{host: $h, default: "claude-fable-5-1", models: [
+                     {id: "claude-opus-5", name: "Opus 5", short_name: "Opus", section: "main"},
+                     {id: "claude-fable-5-1", name: "Fable 5.1", short_name: "Fable", section: "main"},
+                     {id: "claude-sonnet-5", name: "Sonnet 5", short_name: "Sonnet", section: "main"},
+                     {id: "claude-haiku-4-5-20251001", name: "Haiku 4.5", short_name: "Haiku", section: "main"},
+                     {id: "claude-opus-4-8", name: "Opus 4.8", short_name: "Opus", section: "overflow"}]}' ;;
   "doctor "*)      printf '  ok    fleet is linked at ~/bin/fleet\n  ok    git, jq, tmux, fzf found\n  ok    Claude Code hooks installed\n  ok    status line installed\n  ok    host list matches this Mac\n' ;;
   *)               : ;;
 esac

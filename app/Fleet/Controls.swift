@@ -22,6 +22,21 @@ struct StateDot: View {
     }
 }
 
+/// A small capsule with the model family ("OPUS"), coloured per family, so a
+/// costly model stands out in the sidebar. Nothing when there is no snapshot.
+struct ModelTag: View {
+    let session: Session
+    var body: some View {
+        if let f = session.modelFamily {
+            Text(f).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(session.modelColor)
+                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                .background(Capsule().fill(session.modelColor.opacity(0.16)))
+                .help(session.model ?? "")
+        }
+    }
+}
+
 /// Icon above a short caption, both centred: the narrow shape that keeps a
 /// row of action buttons on one line in a small window.
 struct StackedLabelStyle: LabelStyle {

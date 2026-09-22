@@ -47,6 +47,7 @@ final class FleetModel: ObservableObject {
     @Published var sessions: [Session] = []          // `fleet ls --json`: sessions fleet started, every host
     @Published var hosts: HostsInfo = .init(hosts: [], down: [])
     @Published var projects: [String: [ProjectEntry]] = [:]   // per host, fetched when a New-session sheet opens
+    @Published var models: [String: ModelsList] = [:]         // per host, same trigger; missing = still asking
     @Published var lastError: String?               // from polling; clears itself on the next good refresh
     @Published var actionError: String?             // from a button; stays until dismissed or the next action
     @Published var busy: [String: String] = [:]      // session id -> what fleet is doing for it right now

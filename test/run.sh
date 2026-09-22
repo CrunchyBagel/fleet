@@ -381,6 +381,32 @@ rm -f "$RH/.local/state/fleet/sessions/plainR-won't-fix"
 : > "$SHIM_LOG"; renv "FAKE_TMUX_SESSIONS=plainR-main plain-main plain-won't-fix" -- kill -y laptop "plain-won't-fix" >/dev/null 2>&1
 assert_contains "  ...and killed by that name"             "$(cat "$SHIM_LOG")" "tmux kill-session -t plain-won't-fix"
 assert_contains "new --no-attach refuses an inexact project" "$(run new laptop plai --no-attach 2>&1)" "no project 'plai'"
+
+section "models"
+assert_eq "models --local without a catalog: unknown" "$(run models --local)" '{"default":"","models":[]}'
+mkdir -p "$T/home/.claude/cache/model-catalog"
+printf '{"fetchedAt":1,"catalog":{"surface":"ccd","config":{"models":[{"id":"claude-old","name":"Old","short_name":"Old","section":"main"}]}}}' > "$T/home/.claude/cache/model-catalog/tok-a-ccd.json"
+printf '{"fetchedAt":2,"catalog":{"surface":"ccd","config":{"models":[{"id":"claude-fable-5-1","name":"Fable 5.1","short_name":"Fable","section":"main"},{"id":"claude-opus-4-8","name":"Opus 4.8","short_name":"Opus","section":"overflow"}]}}}' > "$T/home/.claude/cache/model-catalog/tok-b-ccd.json"
+printf '{"fetchedAt":3,"catalog":{"surface":"web","config":{"models":[{"id":"not-for-claude-code"}]}}}' > "$T/home/.claude/cache/model-catalog/other.json"
+printf 'garbage' > "$T/home/.claude/cache/model-catalog/broken.json"
+assert_eq "models --local: freshest ccd catalog, other surfaces and garbage ignored" \
+  "$(run models --local | jq -c '[.models[].id]')" '["claude-fable-5-1","claude-opus-4-8"]'
+assert_eq "models: no model in settings = no default"  "$(run models --local | jq -r .default)" ""
+printf '{"model":"claude-fable-5-1[1m]"}' > "$T/home/.claude/settings.json"
+assert_eq "models: settings model without its [1m] suffix" "$(run models --local | jq -r .default)" "claude-fable-5-1"
+printf '{"model":"opus"}' > "$T/home/.claude/settings.local.json"
+assert_eq "models: settings.local wins"                 "$(run models --local | jq -r .default)" "opus"
+assert_eq "models --json carries the host"              "$(run models --json | jq -r .host)" "laptop"
+assert_contains "models table marks the default"        "$(run models)" "default: opus"
+assert_contains "models on the remote"                  "$(run models studio --json)" '"host":"studio"'
+rm -f "$T/home/.claude/settings.local.json" "$T/home/.claude/settings.json"
+: > "$SHIM_LOG"
+run new laptop plain triage --no-attach --model claude-sonnet-5 >/dev/null
+assert_contains "new --model reaches the claude command line, last" "$(cat "$SHIM_LOG")" "--permission-mode auto --remote-control --model 'claude-sonnet-5'"
+: > "$SHIM_LOG"
+run new --local plain triage >/dev/null
+assert_lacks "without --model claude gets no --model"   "$(cat "$SHIM_LOG")" "--model"
+assert_contains "--model without a value is an error"   "$(run new --local plain --model 2>&1)" "needs a value"
 assert_contains "projects --json carries path and remote" "$(run projects --json | jq -c '.projects[] | select(.project=="plain") | {path, remote}')" "\"remote\":\"$T/origins/alpha.git\""
 mkdir -p "$T/home/.claude"; printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"$HOME/bin/fleet hook done"}]}]},"model":"x"}\n' > "$T/home/.claude/settings.json"
 assert_contains "doctor names the hook events still missing" "$(run doctor --local 2>&1)" "missing in $T/home/.claude/settings.json for: UserPromptSubmit PostToolUse Notification SessionEnd"

@@ -14,7 +14,9 @@ fleet open   [host session]           pull its branch onto this Mac and open it 
 fleet shell  [host] [dir]             a login shell on that Mac
 fleet kill [-y] <host> <session>      end a session: the agent is asked to /exit, then tmux is closed
 fleet new [host] [project] [name]     start a session there; a name adds a session, or a worktree
+                                      (--model <m>: which Claude model; default: Claude Code's choice)
 fleet projects [host] [--json]        repos under FLEET_ROOT there
+fleet models [host] [--json]          the models Claude Code there can start with, and its default
 fleet convert <project>               enable worktrees for a clone (on that Mac)
 fleet reap                            remove worktrees with nothing beyond the default branch
 fleet hosts [add [alias]|rm <alias>]  the host list, pushed to every Mac

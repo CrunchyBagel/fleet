@@ -220,6 +220,7 @@ struct NewSessionSheet: View {
     @State private var filter: String = ""
     @State private var project: String?
     @State private var name: String = ""
+    @State private var chosenModel: String = ""   // catalog id; "" = the default row (no --model)
     @State private var attach = true
     @State private var status: String?       // while starting: what fleet is doing
     @State private var failure: String?
@@ -264,6 +265,22 @@ struct NewSessionSheet: View {
                 if loading { ProgressView("Listing projects on \(host)…").controlSize(.small) }
                 else if shown.isEmpty { Text("No project matches").foregroundStyle(.secondary) }
             }
+            // Which model the session starts with: the host's Claude Code
+            // catalog (fleet models), with its own default as the first row.
+            // That row passes no --model at all, so what Claude Code would
+            // pick on its own, a [1m] variant included, is what it gets.
+            Picker("Model", selection: $chosenModel) {
+                if let list = model.models[host] {
+                    if let d = list.resolvedDefault { Text("\(d.name)  (default)").tag("") } else { Text("Automatic").tag("") }
+                    let main = list.models.filter { $0.section == "main" && $0.id != list.resolvedDefault?.id }
+                    let rest = list.models.filter { $0.section != "main" && $0.id != list.resolvedDefault?.id }
+                    if !main.isEmpty { Divider(); ForEach(main, id: \.id) { Text($0.name).tag($0.id) } }
+                    if !rest.isEmpty { Divider(); ForEach(rest, id: \.id) { Text($0.name).tag($0.id) } }
+                } else {
+                    Text("Automatic").tag("")
+                }
+            }
+            .disabled(model.models[host] == nil)
             TextField("Session name (empty = main)", text: $name).textFieldStyle(.roundedBorder)
             Toggle("Open in \(Terminal.preferred.title) when ready", isOn: $attach)
             // Always laid out, two lines tall, so the sheet does not grow
@@ -285,7 +302,7 @@ struct NewSessionSheet: View {
             }
         }
         .padding().frame(width: 480)
-        .onAppear { model.loadProjects(on: host); filterFocused = true }
+        .onAppear { model.loadProjects(on: host); model.loadModels(on: host); filterFocused = true }
         .onChange(of: model.projects[host]?.first?.project) { _, first in if project == nil, let f = first { project = f } }
     }
 
@@ -296,7 +313,8 @@ struct NewSessionSheet: View {
         failure = nil
         Task {
             do {
-                try await model.newSession(host: host, project: p, name: name.isEmpty ? nil : name, thenAttach: attach) { status = $0 }
+                try await model.newSession(host: host, project: p, name: name.isEmpty ? nil : name,
+                                           model: chosenModel.isEmpty ? nil : chosenModel, thenAttach: attach) { status = $0 }
                 status = nil
                 dismiss()
             } catch {
