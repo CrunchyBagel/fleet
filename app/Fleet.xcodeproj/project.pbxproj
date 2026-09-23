@@ -20,6 +20,7 @@
 		5DC9786A4DDBC3D1C19D8B34 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 8B53524E43B6752C3CB29043 /* AppIcon.icon */; };
 		77685373CB72A52A2D532901 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28AA695414672DE697BA6F49 /* Models.swift */; };
 		7AF41430EE88A4658876AB8B /* SSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF449911F45F0E24FAB0D2E1 /* SSH.swift */; };
+		7CDC9F5ADBAB7DF1BCD526E8 /* ClaudeSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34F1F93E921F6FB71A9AB4B /* ClaudeSetupView.swift */; };
 		82E09FD38FCCC0D22B04ECBE /* HostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B305171705245CC710FE3FD /* HostView.swift */; };
 		A61CBE0EF3FCF9520D086E85 /* OverviewViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */; };
 		A6DD10F26F51E83C54FD5D4F /* Model.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781C5978BD166C8C9F0E32F /* Model.swift */; };
@@ -48,6 +49,7 @@
 		BB851BD8F45E2DDBD2D07009 /* Fleet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BE6E69435A9132E8E6545002 /* Keys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keys.swift; sourceTree = "<group>"; };
 		C329FAEED4F1EDF600180595 /* FleetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetApp.swift; sourceTree = "<group>"; };
+		C34F1F93E921F6FB71A9AB4B /* ClaudeSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSetupView.swift; sourceTree = "<group>"; };
 		C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		CDF72A9CE2101390D23744CD /* Fleet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Fleet.entitlements; sourceTree = "<group>"; };
 		CF449911F45F0E24FAB0D2E1 /* SSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSH.swift; sourceTree = "<group>"; };
@@ -112,6 +114,7 @@
 			isa = PBXGroup;
 			children = (
 				8B53524E43B6752C3CB29043 /* AppIcon.icon */,
+				C34F1F93E921F6FB71A9AB4B /* ClaudeSetupView.swift */,
 				A1FBC533AD3B17229A6BB166 /* ContentView.swift */,
 				1E201DF9826FBF58F0A0C108 /* Controls.swift */,
 				CDF72A9CE2101390D23744CD /* Fleet.entitlements */,
@@ -234,6 +237,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7CDC9F5ADBAB7DF1BCD526E8 /* ClaudeSetupView.swift in Sources */,
 				4BA18406B33414ACA892B72F /* ContentView.swift in Sources */,
 				AF120FD009AE3FF48512C498 /* Controls.swift in Sources */,
 				2364C83C3A3702025E147576 /* Fleet.swift in Sources */,

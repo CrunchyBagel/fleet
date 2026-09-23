@@ -136,4 +136,18 @@ extension FleetModel {
             loadHosts(); refresh()
         }
     }
+
+    /// `fleet claude --json`. A load already running wins over a new one, so
+    /// an older answer can never land after a newer one.
+    func loadClaudeSetup() {
+        guard !claudeSetupLoading else { return }
+        claudeSetupLoading = true
+        Task {
+            do {
+                claudeSetup = try await FleetCLI.claudeSetup()
+                claudeSetupAt = Date(); claudeSetupError = nil
+            } catch { claudeSetupError = error.localizedDescription }
+            claudeSetupLoading = false
+        }
+    }
 }

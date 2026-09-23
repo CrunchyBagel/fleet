@@ -50,6 +50,40 @@ hosts_info() {
     down: [{host: "air", reason: "offline (Tailscale)"}]}'
 }
 
+# `claude --json`: made-up Claude Code setups on the three Macs that answer
+# (air is down), in the CLI's shape: some plugins and MCP servers on some
+# Macs only, a setting that differs, two CLAUDE.md versions, and a pile of
+# permission rules, most of them on one Mac only.
+claude_setup() {
+  jq -n '
+    def c($d; $s): {digest: $d, summary: $s};
+    def on($hs; $cell): reduce ("studio", "mini", "mbp16") as $h ({}; .[$h] = (if ($hs | index($h)) then $cell else null end));
+    def row($k; $n; $cells): {kind: $k, name: $n, cells: $cells};
+    [ row("marketplace"; "claude-plugins-official"; on(["studio", "mini", "mbp16"]; c("0cff3e9a"; "anthropics/claude-plugins-official"))),
+      row("marketplace"; "example-tools"; on(["studio"]; c("c7b41d20"; "example/tools"))),
+      row("plugin"; "superpowers@claude-plugins-official"; on(["studio"]; c("e0a1"; "enabled"))),
+      row("plugin"; "swift-lsp@claude-plugins-official"; on(["studio", "mbp16"]; c("e0a1"; "enabled"))),
+      row("plugin"; "code-review@claude-plugins-official"; {studio: c("e0a1"; "enabled"), mini: c("d15a"; "disabled"), mbp16: null}),
+      row("plugin"; "tools@example-tools"; on(["studio"]; c("e0a1"; "enabled"))),
+      row("mcp"; "sentry"; on(["mini", "mbp16"]; c("91c04f7e"; "http mcp.sentry.dev"))),
+      row("mcp"; "xcode"; on(["mini"]; c("3fa1b2c9"; "stdio xcrun"))),
+      row("setting"; "effortLevel"; {studio: null, mini: c("aa11"; "medium"), mbp16: c("bb22"; "high")}),
+      row("setting"; "model"; on(["studio", "mini", "mbp16"]; c("cc33"; "opus"))),
+      row("setting"; "env"; on(["studio"]; c("9e8d7c6b"; ""))),
+      row("file"; "CLAUDE.md"; {studio: c("a1f3e0"; "2480 bytes"), mini: null, mbp16: c("9c02d4"; "1911 bytes")}),
+      row("file"; "scripts/render-md.py"; on(["studio", "mbp16"]; c("30ffab"; "5120 bytes") + {exec: true}))
+    ]
+    + [ ["Bash(git log:*)", "Bash(git diff:*)", "Bash(git status)", "Bash(swift build:*)", "Bash(swift test:*)",
+         "Bash(xcodebuild:*)", "Bash(xcrun simctl list:*)", "Bash(rg:*)", "Bash(gh pr view:*)", "Bash(ls:*)",
+         "Bash(echo '\''it'\'''\''s'\'')", "WebFetch(domain:developer.apple.com)", "Bash(jq:*)", "Bash(make test)",
+         "Bash(git fetch:*)", "Bash(xcodegen)", "Bash(shellcheck:*)", "Read(//tmp/**)"]
+        | to_entries[]
+        | row("perm"; "allow:" + .value;
+              on([["studio", "mini", "mbp16"], ["studio"], ["studio", "mini"]][.key % 3]; c("b5bea7"; ""))) ]
+    | map(.differs = ([.cells[] | if . == null then null else .digest end] | unique | length > 1))
+    | {hosts: ["studio", "mini", "mbp16"], down: {air: "offline according to Tailscale"}, items: .}'
+}
+
 # `ls --json [host]` and `hosts info [host] --json`: the app asks per host on
 # its first load, so the sidebar fills in as answers arrive.
 only() { case "$1" in studio|mini|mbp16) jq --arg h "$1" "$2" ;; air) jq --arg h "$1" "$3" ;; *) cat ;; esac; }
@@ -68,5 +102,6 @@ case "${1:-} ${2:-}" in
                      {id: "claude-haiku-4-5-20251001", name: "Haiku 4.5", short_name: "Haiku", section: "main"},
                      {id: "claude-opus-4-8", name: "Opus 4.8", short_name: "Opus", section: "overflow"}]}' ;;
   "doctor "*)      printf '  ok    fleet is linked at ~/bin/fleet\n  ok    git, jq, tmux, fzf found\n  ok    Claude Code hooks installed\n  ok    status line installed\n  ok    host list matches this Mac\n' ;;
+  "claude --json") sleep 1; claude_setup ;;
   *)               : ;;
 esac

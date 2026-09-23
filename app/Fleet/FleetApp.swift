@@ -44,7 +44,7 @@ struct FleetApp: App {
         }
         .commands {
             CommandGroup(after: .toolbar) {
-                Button("Refresh") { model.refresh() }.keyboardShortcut("r")
+                Button("Refresh") { model.refreshNow() }.keyboardShortcut("r")
             }
             CommandMenu("Session") {
                 Button("Attach") { if let s = model.selectedSession { model.attach(s) } }
@@ -91,7 +91,7 @@ struct MenuBarMenu: View {
         }
         Divider()
         Button("Open Fleet") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
-        Button("Refresh") { model.refresh() }.keyboardShortcut("r")
+        Button("Refresh") { model.refreshNow() }.keyboardShortcut("r")
         Divider()
         Button("Quit Fleet") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }

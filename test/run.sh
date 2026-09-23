@@ -741,5 +741,15 @@ assert_contains "--kind rejects an unknown kind"       "$(renv "${H2[@]}" -- cla
 assert_contains "--kind needs a value"                 "$(renv "${H2[@]}" -- claude --kind 2>&1)" "usage: fleet claude"
 assert_contains "doctor counts rules apart"            "$(renv "${H2[@]}" -- doctor 2>&1)" "and 2 permission rule(s) (fleet claude --diff)"
 
+section "demo-fleet (the app's stand-in)"
+DEMO="$HERE/../docs/demo-fleet"
+D=$(PATH="/usr/bin:/bin" "$DEMO" claude --json)
+assert_eq "demo-fleet claude --json has the CLI's shape" \
+  "$(printf '%s' "$D" | jq -r '[(.hosts | length > 1), (.down | type == "object"), all(.items[]; (.kind | type) == "string" and (.name | type) == "string" and (.differs | type) == "boolean" and (.cells | type) == "object")] | all')" "true"
+assert_eq "  ...a cell is null or {digest, summary}"  "$(printf '%s' "$D" | jq -r '[.items[].cells[] | select(. != null) | (.digest | length >= 4) and (.summary | type) == "string"] | all')" "true"
+assert_eq "  ...never a value field"                   "$(printf '%s' "$D" | jq -r '[.. | objects | has("value")] | any')" "false"
+assert_eq "  ...differs agrees with the cells"        "$(printf '%s' "$D" | jq -r 'all(.items[]; .differs == ([.cells[] | if . == null then null else .digest end] | unique | length > 1))')" "true"
+assert_eq "  ...with every kind"                      "$(printf '%s' "$D" | jq -r '[.items[].kind] | unique | join(",")')" "file,marketplace,mcp,perm,plugin,setting"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

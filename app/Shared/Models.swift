@@ -281,3 +281,132 @@ extension Session {
         }
     }
 }
+
+// `fleet claude --json`: how the Claude Code setup differs across the Macs.
+// Mirrors the CLI, except `value`, which is left undecoded on purpose: the
+// screen never needs it, so nothing added to it later can show a secret.
+struct ClaudeSetup: Decodable {
+    let hosts: [String]
+    let down: [String: String]
+    let items: [ClaudeItem]
+    /// Rows that differ, permission rules apart (they outnumber the rest and matter less).
+    var differing: Int { items.filter { $0.differs && $0.kind != "perm" }.count }
+}
+
+struct ClaudeItem: Decodable, Identifiable {
+    let kind: String
+    let name: String
+    let differs: Bool
+    let cells: [String: ClaudeCell?]       // host -> nil when that Mac lacks it
+    var id: String { kind + "\u{1F}" + name }
+
+    func cell(_ host: String) -> ClaudeCell? { cells[host] ?? nil }
+
+    /// What the matrix shows for a host, as `fleet claude` prints it.
+    func text(_ host: String) -> String {
+        guard let c = cell(host) else { return "·" }
+        switch kind {
+        case "plugin": return c.summary == "disabled" ? "○" : "●"
+        case "perm": return "●"
+        case "error": return "!"
+        case "setting" where name != "env": return c.summary.isEmpty ? "\"\"" : c.summary
+        default: return String(c.digest.prefix(4))
+        }
+    }
+
+    static func title(_ kind: String) -> String {
+        switch kind {
+        case "marketplace": return "Marketplaces"
+        case "plugin": return "Plugins"
+        case "mcp": return "MCP servers"
+        case "setting": return "Settings"
+        case "perm": return "Permission rules"
+        case "file": return "Files"
+        case "error": return "Problems"
+        default: return kind
+        }
+    }
+}
+
+struct ClaudeCell: Decodable {
+    let digest: String
+    let summary: String
+    let exec: Bool?
+}
+
+// How a Claude setup item reads to a person: plain names, what differs in
+// words, and version letters instead of digests.
+extension ClaudeItem {
+    /// A plugin without its "@marketplace", a rule without its "allow:".
+    var displayName: String {
+        switch kind {
+        case "plugin": return name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name
+        case "perm": return name.split(separator: ":", maxSplits: 1).last.map(String.init) ?? name
+        default: return name
+        }
+    }
+    /// What the display name dropped: a plugin's marketplace, a rule's list.
+    var qualifier: String? {
+        switch kind {
+        case "plugin": return name.contains("@") ? name.split(separator: "@", maxSplits: 1).last.map(String.init) : nil
+        case "perm": return name.contains(":") ? name.split(separator: ":", maxSplits: 1).first.map(String.init) : nil
+        default: return nil
+        }
+    }
+    /// Each distinct value, lettered A, B, … in the order of `hosts`.
+    func versions(_ hosts: [String]) -> [String: String] {
+        var out: [String: String] = [:]
+        for h in hosts {
+            if let d = cell(h)?.digest, out[d] == nil { out[d] = String(Character(UnicodeScalar(UInt8(65 + out.count % 26)))) }
+        }
+        return out
+    }
+    /// What differs across `hosts` (the Macs that answered), in words.
+    func status(_ hosts: [String]) -> String {
+        let have = hosts.filter { cell($0) != nil }, missing = hosts.filter { cell($0) == nil }
+        if kind == "error" { return "Not valid JSON on " + have.formatted(.list(type: .and)) }
+        guard !have.isEmpty else { return "Nowhere" }
+        if have.count == 1 && !missing.isEmpty { return "Only on \(have[0])" }
+        var parts: [String] = []
+        if Set(have.compactMap { cell($0)?.digest }).count > 1 {
+            switch kind {
+            case "plugin":
+                parts.append("Disabled on " + have.filter { cell($0)?.summary == "disabled" }.formatted(.list(type: .and)))
+            case "setting" where name != "env":
+                var seen: [String] = []
+                for h in have { let v = cell(h)!.summary; if !seen.contains(v) { seen.append(v) } }
+                parts.append(seen.joined(separator: " · "))
+            default:
+                parts.append("\(versions(have).count) versions")
+            }
+        }
+        if !missing.isEmpty { parts.append((kind == "setting" ? "Not set on " : "Missing on ") + missing.formatted(.list(type: .and))) }
+        return parts.isEmpty ? "Same on all Macs" : parts.joined(separator: " · ")
+    }
+    /// One Mac's line in the inspector.
+    func detail(_ host: String, versions: [String: String]) -> String {
+        guard let c = cell(host) else {
+            switch kind {
+            case "setting": return "Not set"
+            case "perm": return "Not listed"
+            case "file": return "Missing"
+            default: return "Not installed"
+            }
+        }
+        let letter = versions.count > 1 ? versions[c.digest].map { "Version \($0)" } : nil
+        switch kind {
+        case "plugin": return c.summary == "disabled" ? "Installed, disabled" : "Enabled"
+        case "perm": return "Listed"
+        case "error": return "Not valid JSON: fix it by hand"
+        case "setting" where name == "env": return ["Set (values hidden)", letter].compactMap { $0 }.joined(separator: " · ")
+        case "setting": return c.summary
+        default:
+            let exec = c.exec == true ? "executable" : nil
+            var summary: String? = c.summary.isEmpty ? nil : c.summary
+            if kind == "file", let n = Int64(c.summary.replacingOccurrences(of: " bytes", with: "")) {
+                summary = ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
+            }
+            return [letter, summary, exec].compactMap { $0 }.joined(separator: " · ")
+        }
+    }
+}

@@ -817,3 +817,23 @@ Expected: `0 failed`.
 git add CLAUDE.md README.md
 git commit -m "Docs: the Mac app's Claude Setup screen"
 ```
+
+---
+
+## Amendment: list + inspector (replaces Task 1 Step 9, Task 2 Step 6)
+
+The owner rejected the matrix after seeing it. See the spec's Amendment.
+The Grid view from Task 1 Step 9 and the cell menu from Task 2 Step 6 are
+replaced by the following:
+- `ClaudeItem` helpers in `app/Shared/Models.swift`: `displayName`,
+  `qualifier`, `versions(_:)`, `status(_:)`, `detail(_:versions:)`.
+- A rewritten `app/Fleet/ClaudeSetupView.swift`: a `List` with sections,
+  a toolbar picker and search, and an `.inspector` with per-Mac blocks and
+  buttons.
+- `FleetModel.claudeSelected: String?`.
+
+The rest of Task 2 (demo-fleet copy/rm, `FleetCLI.claudeCopy/claudeRemove`,
+`claudeRun`) is unchanged. Verification uses the scratch offscreen harness
+(`NSHostingView` + `cacheDisplay`), because this shell has neither Screen
+Recording nor Accessibility access. The harness also checks `status()`
+strings against the demo data.

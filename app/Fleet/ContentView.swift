@@ -32,6 +32,9 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $model.selected) {
                 Label("Overview", systemImage: "square.grid.2x2").tag(Item.overview)
+                Label("Claude Setup", systemImage: "slider.horizontal.3").tag(Item.claudeSetup)
+                    .badge(model.claudeSetup?.differing ?? 0)
+                    .help("How the Macs' Claude Code setups differ")
                 Section("Machines") {
                     // Flat rows, not DisclosureGroups: see `rows`.
                     ForEach(rows) { row in
@@ -72,6 +75,7 @@ struct ContentView: View {
             case .session(let id):
                 if let s = model.session(id: id) { SessionView(session: s) }
                 else { ContentUnavailableView("Session ended", systemImage: "moon.zzz", description: Text("It is no longer in Fleet's list.")) }
+            case .claudeSetup: ClaudeSetupView()
             case .overview, nil: Overview(selected: $model.selected)
             }
         }
@@ -89,7 +93,7 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem {
-                Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
+                Button { model.refreshNow() } label: { Image(systemName: "arrow.clockwise") }
                     .help("Refresh (⌘R)")
                     .disabled(model.refreshing)
             }

@@ -239,3 +239,64 @@ There is no Swift test target, so the checks are:
   the sidebar item, when it loads, the per-cell menu, and permission rules
   collapsed. Add `ClaudeSetupView.swift` to the file list.
 - README "Apps" section: one sentence.
+
+## Amendment (2026-09-23): list + inspector instead of a matrix
+
+The first build drew the CLI's matrix (dots, digests, hidden context
+menus). The owner found it ugly, hard to read and not like a Mac app. It is
+replaced as follows. Everything else in this spec stands: loading,
+demo-fleet, models, CLI calls, badge, one action at a time, and the
+banner.
+
+- **List** (native `List`, `.inset(alternatesRowBackgrounds: true)`),
+  grouped under Problems, Marketplaces, Plugins, MCP servers, Settings and
+  Files. Each row has:
+  - a kind icon: `bag`, `puzzlepiece.extension`, `server.rack`,
+    `slider.horizontal.3`, `doc.text`, `lock.shield`, or
+    `exclamationmark.triangle` for problems
+  - the plain name (a plugin without `@marketplace`, a rule without
+    `allow:`), with its marketplace or list (allow/deny/ask) as a caption
+  - a trailing status in words (`ClaudeItem.status(hosts)`, in Shared):
+    "Only on studio", "Missing on mini", "Disabled on mini",
+    "medium · high", "2 versions · Missing on mini", "Same on all Macs",
+    "Not valid JSON on mini"
+- **Permission rules** are a collapsible `Section(isExpanded:)` at the
+  bottom, closed by default, with the header "Permission rules — 12 differ".
+- **A Mac that is not answering** gets a quiet line at the top: "air isn't
+  answering: offline according to Tailscale".
+- **Nothing to show** (everything matches under Differences): the empty
+  state reads "All Macs match".
+- **Toolbar:** a segmented `Differences | All` picker. The native search
+  field (`.searchable` in the toolbar) filters by name and replaces the
+  Kinds menu and the separate rule filter. The window title is "Claude
+  Setup", and `navigationSubtitle` shows "Updated 17:43" (or the load
+  error). The window's existing Refresh button and ⌘R reload it
+  (`refreshNow`), so the screen has no refresh button of its own.
+- **Inspector** (the native `.inspector`, always shown) for the selected row:
+  - The title is the name with its kind icon, and under it the kind and
+    marketplace.
+  - One block per Mac that answered (this Mac first), each with a symbol:
+    green `checkmark.circle.fill`, orange `pause.circle.fill` for a
+    disabled plugin, or grey `minus.circle` for absent.
+  - Each block has a detail line (`ClaudeItem.detail`):
+    - plugins: "Enabled", "Installed, disabled" or "Not installed"
+    - settings: the value, or "Not set"
+    - `env`: "Set (values hidden)"
+    - MCP servers, files and marketplaces: "Version A · http
+      mcp.sentry.dev" or "Version B · 2480 bytes · executable". The
+      version letter replaces the digest and appears only when there
+      is more than one version.
+    - rules: "Listed" or "Not listed"
+    - missing files: "Missing"
+  - Buttons, visible rather than in right-click:
+    - a Mac that has the item: **Copy to Others** (a split button whose
+      menu lists each other Mac; shown only when another Mac lacks it or
+      has a different version) and **Remove…** (confirmed)
+    - a Mac without it: **Get from ▾**, listing the Macs that have it, or
+      a plain "Get from studio" button when only one Mac has it
+    - problem rows have no buttons
+  - The running action's output streams at the bottom of the inspector,
+    and every button is disabled while it runs.
+  - With no row selected the inspector says "Select an item". The
+    selection is kept in the model (`claudeSelected`, by item id), so it
+    survives reloads and navigation.

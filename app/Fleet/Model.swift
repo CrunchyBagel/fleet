@@ -7,11 +7,13 @@ import UserNotifications
 /// and a selection that embedded the record would silently drop each time.
 enum Item: Hashable, Identifiable {
     case overview
+    case claudeSetup
     case host(String)
     case session(String)          // Session.id = "host/session"
     var id: String {
         switch self {
         case .overview: return "overview"
+        case .claudeSetup: return "claude-setup"
         case .host(let h): return "host/\(h)"
         case .session(let s): return "session/\(s)"
         }
@@ -58,11 +60,21 @@ final class FleetModel: ObservableObject {
     @Published var refreshing = false
     @Published var lastRefresh: Date?
     @Published var loading: Set<String> = []          // hosts asked on the first load that have not answered yet
+    // The Claude Setup screen: `fleet claude --json`, loaded on demand (it asks every Mac).
+    @Published var claudeSetup: ClaudeSetup?
+    @Published var claudeSetupAt: Date?
+    @Published var claudeSetupError: String?           // the last load failed; the last good matrix stays
+    @Published var claudeSetupLoading = false
+    @Published var claudeShowRules = false             // permission rules expanded, kept while the app runs
+    @Published var claudeSelected: String?             // the row the inspector shows (ClaudeItem.id), kept across reloads
+    @Published var claudeAction: String?               // what the last copy/remove printed
+    @Published var claudeActionRunning = false
 
     // Window state that menus, the menu bar item and notifications also drive.
-    /// $FLEET_SELECT ("host/session", or a host) picks what a launch shows, for screenshots (docs/demo-fleet).
+    /// $FLEET_SELECT ("host/session", a host, or "claude-setup") picks what a launch shows, for screenshots (docs/demo-fleet).
     @Published var selected: Item? = {
         guard let v = ProcessInfo.processInfo.environment["FLEET_SELECT"], !v.isEmpty else { return .overview }
+        if v == "claude-setup" { return .claudeSetup }
         return v.contains("/") ? .session(v) : .host(v)
     }()
     @Published var newSessionOn: NewSessionTarget?
@@ -156,6 +168,13 @@ final class FleetModel: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// ⌘R and the toolbar button: poll now, and ask for the Claude setups
+    /// again when that screen is up (it is not on the poll).
+    func refreshNow() {
+        refresh()
+        if selected == .claudeSetup { loadClaudeSetup() }
+    }
+
     /// Poll at the Settings interval (decision 4: polling, no daemon), and
     /// follow Settings changes: a new interval re-arms the timer, a change to
     /// which sessions are listed refetches at once.
@@ -189,6 +208,7 @@ final class FleetModel: ObservableObject {
                 let all = Prefs.showAllSessions
                 if lastRefresh == nil {
                     try await firstLoad(all: all)
+                    loadClaudeSetup()
                 } else {
                     async let s = FleetCLI.sessions(all: all)
                     async let h = FleetCLI.hosts()

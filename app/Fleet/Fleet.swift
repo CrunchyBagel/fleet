@@ -186,6 +186,11 @@ struct FleetCLI {
 
     // The actions. Attach goes through FLEET_TERM: fleet raises that terminal's
     // window for the session if one is open, else opens a new one.
+    /// `fleet claude --json`: every Mac's Claude Code setup, merged. It asks
+    /// every Mac, so it is loaded on demand, never on the poll.
+    static func claudeSetup() async throws -> ClaudeSetup {
+        try await decode(ClaudeSetup.self, from: run(["claude", "--json"], timeout: pollTimeout))
+    }
     static func attach(host: String, session: String, terminal: Terminal) async throws {
         try await run(["attach", host, session], env: ["FLEET_TERM": terminal.rawValue])
     }
