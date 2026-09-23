@@ -365,7 +365,9 @@ whoever runs it.
   un-Mac-like, so do not go back to that. Badge = differing items without
   permission rules, which sit in a collapsed section. Not polled: loaded
   after the first load, when shown, on ⌘R/toolbar Refresh (`refreshNow`)
-  and after each action. `fleet claude copy|rm -y` run one at a time,
+  and after each action. Its sidebar row's `.tag` must come after
+  `.badge`: a tag under `.badge` is invisible to the List and the row
+  cannot be selected (clicking it did nothing). `fleet claude copy|rm -y` run one at a time,
   output streamed into the inspector; failures go to the banner (the FAIL
   line, else fleet's stderr). `ClaudeCell` never decodes `value`.
 - Machine screen: Shell (`fleet shell <host>` with FLEET_TERM), Screen

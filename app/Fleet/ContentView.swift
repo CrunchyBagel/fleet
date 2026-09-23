@@ -32,9 +32,11 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $model.selected) {
                 Label("Overview", systemImage: "square.grid.2x2").tag(Item.overview)
-                Label("Claude Setup", systemImage: "slider.horizontal.3").tag(Item.claudeSetup)
+                // The tag goes after .badge: under it the List no longer sees the tag and the row cannot be selected.
+                Label("Claude Setup", systemImage: "slider.horizontal.3")
                     .badge(model.claudeSetup?.differing ?? 0)
                     .help("How the Macs' Claude Code setups differ")
+                    .tag(Item.claudeSetup)
                 Section("Machines") {
                     // Flat rows, not DisclosureGroups: see `rows`.
                     ForEach(rows) { row in
