@@ -696,5 +696,36 @@ assert_contains "doctor across Macs says the Claude setups differ" "$O" "claude 
 assert_contains "  ...pointing at fleet claude --diff" "$O" "(fleet claude --diff)"
 assert_lacks "doctor <host> does not"                   "$(renv FLEET_HOSTS="laptop studio" -- doctor studio 2>&1)" "claude setup"
 
+# Review fixes.
+mkdir -p "$T/leak"; printf '{"mcpServers":{"s":{"type":"http","url":"https://user:tok999@mcp.x.dev:8443/p?key=abc"},"q":{"type":"http","url":"https://h.dev?token=qqq"},"n":{"type":"http","url":5}}}' > "$T/leak/.claude.json"
+L=$(renv HOME="$T/leak" -- claude --local)
+assert_eq "an mcp summary is only the URL's host"      "$(printf '%s' "$L" | jq -r '[.items[] | select(.name=="s" or .name=="q") | .summary] | sort | join(",")')" "http h.dev,http mcp.x.dev"
+assert_lacks "  ...no userinfo token"                  "$L" "tok999"
+assert_lacks "  ...no query token"                     "$L" "qqq"
+assert_eq "  ...and a url that is not a string does not break the snapshot" "$(printf '%s' "$L" | jq -r '.items[] | select(.name=="n") | .kind')" "mcp"
+cp "$RH/.claude/plugins/known_marketplaces.json" "$T/km.bak"
+jq '.tools = {source: {source: "github", repo: "other/tools"}}' "$T/km.bak" > "$RH/.claude/plugins/known_marketplaces.json"
+O=$(renv "${H2[@]}" -- claude copy marketplace tools --from this --to studio 2>&1); RC=$?
+assert_contains "copy marketplace onto a different source fails" "$O" "tools on studio comes from other/tools"
+assert_eq "  ...exits 1"                               "$RC" "1"
+assert_contains "  ...but copying a plugin still uses the marketplace that is there" "$(renv "${H2[@]}" -- claude copy plugin t@tools --from this --to studio 2>&1)" "ok    plugin t@tools -> studio"
+cp "$T/km.bak" "$RH/.claude/plugins/known_marketplaces.json"
+assert_contains "copy marketplace with the same source is ok" "$(renv "${H2[@]}" -- claude copy marketplace tools --from this --to studio 2>&1)" "ok    marketplace tools -> studio"
+mkdir -p "$T/corrupt/.claude/plugins"; printf '{"enabledPlugins":{"a@m":tr' > "$T/corrupt/.claude/settings.json"
+printf '{"m":{"source":{"source":"github","repo":"acme/m"}}}' > "$T/corrupt/.claude/plugins/known_marketplaces.json"
+assert_contains "unset marketplace refuses while settings.json is not JSON" "$(renv HOME="$T/corrupt" -- claude unset --local marketplace m 2>&1)" "not valid JSON"
+assert_eq "  ...and keeps the marketplace"             "$(jq -r 'has("m")' "$T/corrupt/.claude/plugins/known_marketplaces.json")" "true"
+mkdir -p "$T/lnk/.claude" "$T/dotfiles"; echo "# dotfiles" > "$T/dotfiles/CLAUDE.md"; ln -s "$T/dotfiles/CLAUDE.md" "$T/lnk/.claude/CLAUDE.md"
+assert_contains "set file refuses to replace a symlink" "$(echo new | renv HOME="$T/lnk" -- claude set --local file CLAUDE.md 2>&1)" "symlink"
+assert_true "  ...which is still a link"               test -L "$T/lnk/.claude/CLAUDE.md"
+assert_eq "  ...to the unchanged file"                 "$(cat "$T/dotfiles/CLAUDE.md")" "# dotfiles"
+O=$(renv "${H2[@]}" -- claude rm -y mcp nowhere all 2>&1); RC=$?
+assert_contains "rm of something a Mac does not have is not a failure" "$O" "ok    mcp nowhere not on studio"
+assert_eq "  ...exit 0"                                "$RC" "0"
+: > "$SHIM_LOG"
+assert_contains "names starting with - are refused"   "$(run claude unset --local plugin -y 2>&1)" "cannot start with -"
+assert_lacks "  ...and never reach claude"             "$(cat "$SHIM_LOG")" "uninstall"
+assert_contains "  ...in copy too"                     "$(renv "${H2[@]}" -- claude copy plugin --yes --from this --to studio 2>&1)" "cannot start with -"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

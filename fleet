@@ -1086,8 +1086,9 @@ def shown: if type == "string" then . else tojson end | clip(12);
     ($u.mcpServers // {} | to_entries[]
       | {kind: "mcp", name: .key, value: null, secret: .value,
          summary: ((.value.type // "stdio") + " "
-           + (if .value.url then (.value.url | sub("^[a-z]+://"; "") | sub("/.*$"; ""))
-              else (.value.command // "" | sub("^.*/"; "")) end))}),
+           + (if (.value.url | type) == "string"
+              then ((.value.url | capture("^[A-Za-z][A-Za-z0-9+.-]*://([^@/?#]*@)?(?<h>[^/?#:]*)") | .h) // "")
+              else (.value.command // "" | tostring | sub("^.*/"; "")) end))}),
     ($s | to_entries[] | select(.key as $k | ($skip | index([$k]) | not) and ($k | test("(State|Cache|Timestamp)$") | not))
       | if .key == "env" then {kind: "setting", name: "env", value: null, secret: .value, summary: ""}
         else {kind: "setting", name: .key, value: .value, summary: (.value | shown)} end),
@@ -1211,6 +1212,10 @@ claude_matrix_cmd() {   # [--json] [--diff] [host...]
   if [ -n "$(down_hosts "$tmp")" ]; then printf '%snot answering:\n%s%s\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"; fi
 }
 
+claude_valid_name() {   # a name is never an option to the claude CLI (fleet never passes -y)
+  case "$1" in -*) die "names cannot start with - ('$1')" ;; esac
+}
+
 claude_valid_file() {   # CLAUDE.md or scripts/<name>: nothing that climbs out of ~/.claude
   case "$1" in
     CLAUDE.md) return 0 ;;
@@ -1277,6 +1282,7 @@ claude_get_local() {
 claude_file_put() {   # <name> [--exec]: content on stdin -> ~/.claude/<name>
   local f="$HOME/.claude/$1" tmp
   claude_valid_file "$1" || die "files are CLAUDE.md or scripts/<name>"
+  [ ! -L "$f" ] || die "$f is a symlink; change the file it points to ($(readlink "$f"))"
   mkdir -p "$(dirname "$f")"
   [ ! -e "$f" ] || [ -e "$f.fleet-backup" ] || cp -p "$f" "$f.fleet-backup"
   tmp=$(mktemp "$f.XXXXXX")
@@ -1304,7 +1310,12 @@ claude_set_local() {
   printf '%s' "$v" | jq -e . >/dev/null 2>&1 || die "not JSON on stdin"
   case "$k" in
     marketplace)
-      if claude_get_local marketplace "$n" >/dev/null; then echo "marketplace $n already known"; return 0; fi
+      if cur=$(claude_get_local marketplace "$n"); then
+        if [ "${3:-}" = --if-missing ] || [ "$(printf '%s' "$cur" | jq -cS .)" = "$(printf '%s' "$v" | jq -cS .)" ]; then
+          echo "marketplace $n already known"; return 0
+        fi
+        die "$n on $FLEET_SELF comes from $(printf '%s' "$cur" | jq -r '.repo // .url // .path // "another source"'); fleet claude rm marketplace $n $FLEET_SELF first"
+      fi
       src=$(printf '%s' "$v" | jq -r 'if .source == "github" then .repo elif .source == "git" or .source == "url" then .url else "" end // ""')
       [ -n "$src" ] || die "marketplace $n comes from a local path; add it on $FLEET_SELF by hand (claude plugin marketplace add <path>)"
       claude_run "claude plugin marketplace add $src" claude plugin marketplace add "$src"
@@ -1342,6 +1353,11 @@ claude_set_local() {
 
 claude_unset_local() {   # <kind> <name>: remove the item from this Mac
   local k="$1" n="$2" lr f
+  f="$HOME/.claude/settings.json"
+  if [ "$k" != file ] && [ "$k" != mcp ] && [ -f "$f" ] && ! jq -e 'type == "object"' "$f" >/dev/null 2>&1; then
+    die "$f is not valid JSON; fix it by hand first"
+  fi
+  case "$k" in plugin|mcp|marketplace|perm) claude_get_local "$k" "$n" >/dev/null || { echo "no $k $n here"; return 0; } ;; esac
   case "$k" in
     marketplace)
       if jq -e --arg n "$n" '(.enabledPlugins // {}) | any(to_entries[]; .value == true and (.key | endswith("@" + $n)))' \
@@ -1386,6 +1402,7 @@ claude_copy() {
   [ $# -ge 2 ] || die "$usage"
   shift 2
   claude_valid_kind "$k" || die "unknown kind '$k' (kinds: $CLAUDE_KINDS)"
+  claude_valid_name "$n"
   while [ $# -gt 0 ]; do
     case "$1" in
       --from) [ $# -ge 2 ] || die "$usage"; from=$(claude_host "$2") || exit 1; shift 2 ;;
@@ -1413,7 +1430,7 @@ claude_copy() {
       || die "$n's marketplace $mkt is not known on $from"
   fi
   for h in $to; do
-    if [ -n "$mkt" ] && ! run_on "$h" "fleet claude set --local marketplace $(shq "$mkt")" < "$tmp/mkt" > "$tmp/out" 2>&1; then
+    if [ -n "$mkt" ] && ! run_on "$h" "fleet claude set --local marketplace $(shq "$mkt") --if-missing" < "$tmp/mkt" > "$tmp/out" 2>&1; then
       fail "$k $n -> $h: $(tail -1 "$tmp/out" | sed 's/^fleet: //')"; continue
     fi
     if run_on "$h" "fleet claude set --local $(shq "$k") $(shq "$n") $exec" < "$tmp/value" > "$tmp/out" 2>&1; then
@@ -1433,6 +1450,7 @@ claude_rm() {   # [-y] <kind> <name> <host...>|all
   [ $# -ge 3 ] || die "$usage"
   k="$1" n="$2"; shift 2
   claude_valid_kind "$k" || die "unknown kind '$k' (kinds: $CLAUDE_KINDS)"
+  claude_valid_name "$n"
   for a in "$@"; do
     if [ "$a" = all ]; then hosts=" $FLEET_HOSTS"; break; fi
     h=$(claude_host "$a") || exit 1; hosts="$hosts $h"
@@ -1446,7 +1464,8 @@ claude_rm() {   # [-y] <kind> <name> <host...>|all
   tmp=$(mktemp)
   trap 'rm -f "${tmp:-}"' RETURN
   for h in $hosts; do
-    if run_on "$h" "fleet claude unset --local $(shq "$k") $(shq "$n")" > "$tmp" 2>&1 </dev/null; then ok "removed $k $n on $h"
+    if run_on "$h" "fleet claude unset --local $(shq "$k") $(shq "$n")" > "$tmp" 2>&1 </dev/null; then
+      case "$(tail -1 "$tmp")" in "no "*) ok "$k $n not on $h" ;; *) ok "removed $k $n on $h" ;; esac
     else fail "$k $n on $h: $(tail -1 "$tmp" | sed 's/^fleet: //')"; fi
   done
   return "$DOCTOR_RC"
@@ -1470,6 +1489,7 @@ cmd_claude() {
     get|set|unset)
       [ "${2:-}" = --local ] && [ -n "${4:-}" ] || die "usage: fleet claude $1 --local <kind> <name>"
       claude_valid_kind "$3" || die "unknown kind '$3' (kinds: $CLAUDE_KINDS)"
+      claude_valid_name "$4"
       "claude_$1_local" "$3" "$4" "${5:-}"; return ;;
     copy) shift; claude_copy "$@"; return ;;
     rm)   shift; claude_rm "$@"; return ;;
