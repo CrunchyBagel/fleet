@@ -320,6 +320,7 @@ struct ClaudeCell: Decodable {
     let digest: String
     let summary: String
     let exec: Bool?
+    let plugin: String?        // an MCP server this Mac has only because that plugin provides it
 }
 
 // How a Claude setup item reads to a person: plain names, what differs in
@@ -349,10 +350,22 @@ extension ClaudeItem {
         }
         return out
     }
+    /// The plugin that provides this MCP server on some Mac, if any.
+    var providingPlugin: String? { cells.values.compactMap { $0?.plugin }.first }
+
     /// What differs across `hosts` (the Macs that answered), in words.
     func status(_ hosts: [String]) -> String {
         let have = hosts.filter { cell($0) != nil }, missing = hosts.filter { cell($0) == nil }
         if kind == "error" { return "Not valid JSON on " + have.formatted(.list(type: .and)) }
+        if kind == "mcp", providingPlugin != nil {
+            // Where it comes from matters more than its digest: a plugin here, an entry there.
+            let via = have.filter { cell($0)?.plugin != nil }, alone = have.filter { cell($0)?.plugin == nil }
+            var parts: [String] = []
+            if !via.isEmpty { parts.append("Via plugin on " + via.formatted(.list(type: .and))) }
+            if !alone.isEmpty { parts.append("Standalone on " + alone.formatted(.list(type: .and))) }
+            if !missing.isEmpty { parts.append("Missing on " + missing.formatted(.list(type: .and))) }
+            return parts.joined(separator: " · ")
+        }
         guard !have.isEmpty else { return "Nowhere" }
         if have.count == 1 && !missing.isEmpty { return "Only on \(have[0])" }
         var parts: [String] = []
@@ -386,6 +399,7 @@ extension ClaudeItem {
             }
         }
         let letter = versions.count > 1 ? versions[c.digest].map { "Version \($0)" } : nil
+        if let p = c.plugin { return "Via the \(p.split(separator: "@").first.map(String.init) ?? p) plugin" }
         switch kind {
         case "plugin": return c.summary == "disabled" ? "Installed, disabled" : "Enabled"
         case "perm": return "Listed"
@@ -394,6 +408,8 @@ extension ClaudeItem {
         case "setting":
             let shown = c.summary.isEmpty ? "\"\"" : c.summary
             return c.summary.hasSuffix("…") ? [letter, shown].compactMap { $0 }.joined(separator: " · ") : shown
+        case "mcp" where providingPlugin != nil:
+            return "Standalone · " + c.summary          // the difference is where it comes from, not a version
         default:
             let exec = c.exec == true ? "executable" : nil
             var summary: String? = c.summary.isEmpty ? nil : c.summary

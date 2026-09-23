@@ -167,6 +167,9 @@ struct ClaudeInspector: View {
                     Text([ClaudeItem.title(item.kind).dropLast().description, item.qualifier].compactMap { $0 }.joined(separator: " · "))
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                if item.kind == "mcp", let plugin = item.providingPlugin, item.differs {
+                    sameEverywhere(plugin)
+                }
                 ForEach(hosts, id: \.self) { h in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
@@ -196,14 +199,40 @@ struct ClaudeInspector: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+    /// An MCP server some Macs get from a plugin and others from their own
+    /// entry: one button makes every Mac use the plugin, one copies a Mac's
+    /// entry to the rest.
+    @ViewBuilder private func sameEverywhere(_ plugin: String) -> some View {
+        let short = plugin.split(separator: "@").first.map(String.init) ?? plugin
+        let standalone = hosts.filter { item.cell($0) != nil && item.cell($0)?.plugin == nil }
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Make it run the same on every Mac").font(.subheadline.weight(.semibold))
+            Button("Use the \(short) plugin everywhere") { model.claudeUsePlugin(item, hosts: hosts) }
+                .help("Installs the \(short) plugin where it is missing, then removes the standalone entries")
+            if let src = standalone.first {
+                Button("Use \(src)'s entry everywhere") {
+                    model.claudeCopy(item, from: src, to: hosts.filter { $0 != src && (item.cell($0) == nil || item.cell($0)?.plugin != nil) })
+                }
+                Text("Macs with the \(short) plugin would then run it twice; remove the plugin there.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .controlSize(.small).disabled(model.claudeActionRunning)
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     /// What can be done from this Mac: copy its version to the Macs that
     /// lack it or differ, or remove it here; or, when it lacks the item, get
     /// it from a Mac that has it. Only the Macs that answered are offered.
     @ViewBuilder private func actions(_ h: String) -> some View {
         let others = hosts.filter { $0 != h }
-        if let c = item.cell(h) {
+        if let c = item.cell(h), c.plugin != nil {
+            Text("Comes with the plugin: remove the plugin to remove it.").font(.caption).foregroundStyle(.secondary)
+        } else if let c = item.cell(h) {
             HStack(spacing: 8) {
-                let behind = others.filter { item.cell($0)?.digest != c.digest }
+                // Not onto a Mac that has it through a plugin: it would run twice (the box above says so).
+                let behind = others.filter { item.cell($0)?.digest != c.digest && item.cell($0)?.plugin == nil }
                 if behind.count == 1 {
                     Button("Copy to \(behind[0])") { model.claudeCopy(item, from: h, to: behind) }
                         .help("Make \(behind[0]) match \(h)")
@@ -222,7 +251,7 @@ struct ClaudeInspector: View {
                     .help("Remove it from \(h)")
             }
         } else {
-            let sources = others.filter { item.cell($0) != nil }
+            let sources = others.filter { item.cell($0) != nil && item.cell($0)?.plugin == nil }   // a plugin's server travels as the plugin
             if sources.count == 1 {
                 Button("Get from \(sources[0])") { model.claudeCopy(item, from: sources[0], to: [h]) }
             } else if !sources.isEmpty {

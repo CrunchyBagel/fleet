@@ -166,6 +166,18 @@ extension FleetModel {
     func claudeCopy(_ item: ClaudeItem, from: String, to: [String]) {
         claudeRun("claude copy", item) { p in try await FleetCLI.claudeCopy(kind: item.kind, name: item.name, from: from, to: to, progress: p) }
     }
+    /// Make an MCP server run the same way everywhere by the plugin that
+    /// provides it: install the plugin on every Mac without it (from a Mac
+    /// that has it), then remove the standalone entries, so no Mac runs two.
+    func claudeUsePlugin(_ item: ClaudeItem, hosts: [String]) {
+        guard let plugin = item.providingPlugin, let from = hosts.first(where: { item.cell($0)?.plugin != nil }) else { return }
+        let lacking = hosts.filter { item.cell($0)?.plugin == nil }
+        let standalone = hosts.filter { item.cell($0) != nil && item.cell($0)?.plugin == nil }
+        claudeRun("claude copy", item) { p in
+            if !lacking.isEmpty { try await FleetCLI.claudeCopy(kind: "plugin", name: plugin, from: from, to: lacking, progress: p) }
+            for h in standalone { try await FleetCLI.claudeRemove(kind: "mcp", name: item.name, host: h, progress: p) }
+        }
+    }
     func claudeRemove(_ item: ClaudeItem, from host: String) {
         claudeRun("claude rm", item) { p in try await FleetCLI.claudeRemove(kind: item.kind, name: item.name, host: host, progress: p) }
     }

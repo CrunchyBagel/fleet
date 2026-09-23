@@ -1073,7 +1073,7 @@ claude_src() { if [ -f "$1" ] && jq -e 'type == "object"' "$1" >/dev/null 2>&1; 
 claude_sha() { /usr/bin/perl -MDigest::SHA=sha256_hex -ne 'chomp; print sha256_hex($_), "\n"'; }
 
 # The jq behind the snapshot. canon = sorted-keys JSON text, what the digest is of.
-# shellcheck disable=SC2016  # $s, $u, $m, $skip, $bad are jq variables
+# shellcheck disable=SC2016  # $s, $u, $m, $pm, $skip, $bad are jq variables
 CLAUDE_SNAPSHOT_JQ='
 def canon: walk(if type == "object" then to_entries | sort_by(.key) | from_entries else . end) | tojson;
 def clip($n): if length > $n then .[0:$n - 1] + "…" else . end;
@@ -1088,7 +1088,11 @@ def shown: if type == "string" then . else tojson end | clip(12);
          summary: ((.value.type // "stdio") + " "
            + (if (.value.url | type) == "string"
               then ((.value.url | capture("^[A-Za-z][A-Za-z0-9+.-]*://([^@/?#]*@)?(?<h>[^/?#:]*)") | .h) // "")
-              else (.value.command // "" | tostring | sub("^.*/"; "")) end))}),
+              else (.value.command // "" | tostring | sub("^.*/"; "")) end)
+           + (if $pm[.key] then " (also via \($pm[.key].plugin | sub("@.*$"; "")) plugin)" else "" end))}),
+    ($pm | to_entries[] | select(.key as $k | ($u.mcpServers // {}) | has($k) | not)
+      | {kind: "mcp", name: .key, value: null, secret: .value, plugin: .value.plugin,
+         summary: "via \(.value.plugin | sub("@.*$"; "")) plugin"}),
     ($s | to_entries[] | select(.key as $k | ($skip | index([$k]) | not) and ($k | test("(State|Cache|Timestamp)$") | not))
       | if .key == "env" then {kind: "setting", name: "env", value: null, secret: .value, summary: ""}
         else {kind: "setting", name: .key, value: .value, summary: (.value | shown)} end),
@@ -1100,6 +1104,30 @@ def shown: if type == "string" then . else tojson end | clip(12);
   ]
 | map(.canon = ((if has("secret") then .secret else .value end) | canon) | del(.secret))'
 
+# The MCP servers this Mac's enabled plugins declare (the manifest's
+# mcpServers, inline or as a path, else the plugin's .mcp.json), as
+# {"<server>": {"plugin": "<name@marketplace>", "entry": {...}}}: Claude Code
+# runs them as plugin:<plugin>:<server>, so an agent has them as surely as a
+# standalone ~/.claude.json entry. The first plugin to declare a name keeps it.
+claude_plugin_mcps() {
+  local s="$HOME/.claude/settings.json" i="$HOME/.claude/plugins/installed_plugins.json" p dir ms out='{}'
+  while IFS=$'\t' read -r p dir; do
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then continue; fi
+    ms=""
+    [ ! -f "$dir/.claude-plugin/plugin.json" ] || ms=$(jq -c '.mcpServers // empty' "$dir/.claude-plugin/plugin.json" 2>/dev/null || true)
+    case "$ms" in
+      \"*) ms=$(jq -c '.mcpServers // .' "$dir/$(printf '%s' "$ms" | jq -r .)" 2>/dev/null || true) ;;
+    esac
+    if [ -z "$ms" ] && [ -f "$dir/.mcp.json" ]; then ms=$(jq -c '.mcpServers // .' "$dir/.mcp.json" 2>/dev/null || true); fi
+    [ -n "$ms" ] || continue
+    out=$(printf '%s' "$out" | jq -c --arg p "$p" --argjson ms "$ms" \
+      'reduce ($ms | objects | to_entries[]) as $e (.; if has($e.key) then . else .[$e.key] = {plugin: $p, entry: $e.value} end)' 2>/dev/null || printf '%s' "$out")
+  done < <(jq -r --slurpfile i "$(claude_src "$i")" \
+      '($i[0].plugins // {}) as $inst | (.enabledPlugins // {}) | to_entries[] | select(.value == true)
+       | .key as $k | [$k, (($inst[$k] // [])[0].installPath // "")] | @tsv' "$(claude_src "$s")")
+  printf '%s' "$out"
+}
+
 # This Mac's Claude setup as {"version":1,"items":[...]}: the wire format
 # `fleet claude` asks every host for. Needs only jq and perl, like status.
 claude_snapshot_local() {
@@ -1110,7 +1138,7 @@ claude_snapshot_local() {
 "; fi
   done
   items=$(jq -nc --slurpfile s "$(claude_src "$s")" --slurpfile u "$(claude_src "$u")" --slurpfile m "$(claude_src "$m")" \
-            --arg skip "$CLAUDE_SKIP_KEYS" --arg bad "$bad" "$CLAUDE_SNAPSHOT_JQ")
+            --argjson pm "$(claude_plugin_mcps)" --arg skip "$CLAUDE_SKIP_KEYS" --arg bad "$bad" "$CLAUDE_SNAPSHOT_JQ")
   digests=$(printf '%s' "$items" | jq -r '.[].canon' | claude_sha)
   for f in "$HOME/.claude/CLAUDE.md" "$HOME/.claude/scripts"/*; do
     [ -f "$f" ] || continue
@@ -1148,7 +1176,8 @@ claude_matrix() {
             | {kind: .[0].kind, name: .[0].name,
                cells: (reduce .[] as $c ({}; .[$c.host] = ($c | {digest, summary}
                         + (if .value != null then {value} else {} end)
-                        + (if .exec != null then {exec} else {} end))))}
+                        + (if .exec != null then {exec} else {} end)
+                        + (if .plugin != null then {plugin} else {} end))))}
             | .cells as $c | .cells = (reduce $hosts[] as $h ({}; .[$h] = ($c[$h] // null)))
             | .differs = ([.cells[] | if . == null then null else .digest end] | unique | length > 1) ]
         | sort_by(.kind as $k | [($order | index([$k])), .name]) as $items
@@ -1422,7 +1451,7 @@ claude_unset_local() {   # <kind> <name>: remove the item from this Mac
 # in a temp dir for the length of the copy. A plugin's marketplace goes first.
 claude_copy() {
   local usage="usage: fleet claude copy <kind> <name> --from <host> --to <host...>|all"
-  local k="${1:-}" n="${2:-}" from="" to="" h tmp exec="" mkt=""
+  local k="${1:-}" n="${2:-}" from="" to="" h tmp exec="" mkt="" p
   [ $# -ge 2 ] || die "$usage"
   shift 2
   claude_valid_kind "$k" || die "unknown kind '$k' (kinds: $CLAUDE_KINDS)"
@@ -1444,7 +1473,13 @@ claude_copy() {
   [ -n "$to" ] || die "nothing to copy to: every target is $from"
   tmp=$(mktemp -d)
   trap 'rm -rf "${tmp:-}"' RETURN
-  run_on "$from" "fleet claude get --local $(shq "$k") $(shq "$n")" > "$tmp/value" 2>/dev/null || die "no $k '$n' on $from"
+  if ! run_on "$from" "fleet claude get --local $(shq "$k") $(shq "$n")" > "$tmp/value" 2>/dev/null; then
+    # A server a plugin provides has no entry of its own to copy: the plugin is what travels.
+    if [ "$k" = mcp ] && p=$(run_on "$from" "fleet claude --local" | jq -er --arg n "$n" '.items[] | select(.kind == "mcp" and .name == $n) | .plugin // empty'); then
+      die "$n on $from comes from the $p plugin; copy the plugin instead: fleet claude copy plugin $p --from $from --to <host...>"
+    fi
+    die "no $k '$n' on $from"
+  fi
   if [ "$k" = file ] && run_on "$from" "fleet claude --local" | jq -e --arg n "$n" 'any(.items[]; .kind == "file" and .name == $n and .exec)' >/dev/null; then
     exec="--exec"
   fi

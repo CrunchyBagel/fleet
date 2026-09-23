@@ -138,7 +138,10 @@ whoever runs it.
   `claude [--json] [--diff] [--kind k,...] [host...]` = how the Claude Code setup differs
   across the Macs, one row per item: `marketplace` (known_marketplaces.json),
   `plugin` (`enabledPlugins`, enabled/disabled), `mcp` (user-scope
-  `mcpServers` in `~/.claude.json`), `setting` (settings.json top-level keys
+  `mcpServers` in `~/.claude.json`, plus the servers enabled plugins declare,
+  `claude_plugin_mcps`: manifest `mcpServers` or `.mcp.json`, cell `plugin`
+  set; a standalone entry wins its name, summary "(also via X plugin)"; `copy`
+  of a plugin's server says to copy the plugin), `setting` (settings.json top-level keys
   and `permissions.<k>`, minus `CLAUDE_SKIP_KEYS` and `*State|*Cache|*Timestamp`),
   `perm` (one row per `permissions.allow|deny|ask` rule, so separately grown
   allowlists are not clobbered), `file` (`~/.claude/CLAUDE.md`,
@@ -369,7 +372,10 @@ whoever runs it.
   `.badge`: a tag under `.badge` is invisible to the List and the row
   cannot be selected (clicking it did nothing). `fleet claude copy|rm -y` run one at a time,
   output streamed into the inspector; failures go to the banner (the FAIL
-  line, else fleet's stderr). `ClaudeCell` never decodes `value`.
+  line, else fleet's stderr). `ClaudeCell` never decodes `value`. An MCP
+  server some Macs get from a plugin reads "Via plugin on X · Standalone on
+  Y", and the inspector offers "Use the X plugin everywhere" (copy plugin,
+  then `rm -y mcp` of the standalone entries) or "Use Y's entry everywhere".
 - Machine screen: Shell (`fleet shell <host>` with FLEET_TERM), Screen
   Sharing, New session, and a Doctor section that runs `fleet doctor <host>`;
   a session's terminal button (named after the chosen app) is a menu:

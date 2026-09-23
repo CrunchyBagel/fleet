@@ -764,5 +764,31 @@ O=$(PATH="/usr/bin:/bin" "$DEMO" claude copy mcp nope --from studio --to mini 2>
 assert_contains "demo-fleet: a copy that dies says so on stderr only" "$O" "fleet: no mcp 'nope' on studio"
 assert_eq "  ...exit 1"                               "$RC" "1"
 
+section "MCP servers that plugins provide"
+PH="$T/ph/.claude"; mkdir -p "$PH/plugins/cache/sp/.claude-plugin" "$PH/plugins/cache/mp" "$PH/plugins/cache/offp/.claude-plugin"
+printf '{"enabledPlugins":{"sp@official":true,"mp@official":true,"offp@official":false}}' > "$PH/settings.json"
+printf '{"version":2,"plugins":{"sp@official":[{"installPath":"%s"}],"mp@official":[{"installPath":"%s"}],"offp@official":[{"installPath":"%s"}]}}' \
+  "$PH/plugins/cache/sp" "$PH/plugins/cache/mp" "$PH/plugins/cache/offp" > "$PH/plugins/installed_plugins.json"
+printf '{"name":"sp","mcpServers":{"sentry":{"type":"http","url":"https://mcp.sentry.dev/mcp?utm_source=plugin","headers":{"Authorization":"Bearer sekrit-plugin"}}}}' > "$PH/plugins/cache/sp/.claude-plugin/plugin.json"
+printf '{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}' > "$PH/plugins/cache/mp/.mcp.json"
+printf '{"name":"offp","mcpServers":{"offsrv":{"type":"stdio","command":"x"}}}' > "$PH/plugins/cache/offp/.claude-plugin/plugin.json"
+printf '{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}' > "$T/ph/.claude.json"
+PS=$(renv HOME="$T/ph" -- claude --local)
+assert_eq "an enabled plugin's MCP server is a row, marked with its plugin" \
+  "$(printf '%s' "$PS" | jq -r '.items[] | select(.kind=="mcp" and .name=="sentry") | "\(.plugin) / \(.summary)"')" "sp@official / via sp plugin"
+assert_eq "  ...read from .mcp.json too; a standalone entry of the same name wins" \
+  "$(printf '%s' "$PS" | jq -r '.items[] | select(.kind=="mcp" and .name=="linear") | "\(.plugin) / \(.summary)"')" "null / http mcp.linear.app (also via mp plugin)"
+assert_eq "  ...a disabled plugin's servers are not"     "$(printf '%s' "$PS" | jq -r '[.items[] | select(.name=="offsrv")] | length')" "0"
+assert_lacks "  ...and its secrets stay home"           "$PS" "sekrit-plugin"
+PM=$(renv HOME="$T/ph" FLEET_HOSTS="laptop studio" -- claude --json)
+assert_eq "via a plugin here, standalone there: the row differs and the cell names the plugin" \
+  "$(printf '%s' "$PM" | jq -r '.items[] | select(.kind=="mcp" and .name=="sentry") | "\(.differs) \(.cells.laptop.plugin) \(.cells.studio.plugin)"')" "true sp@official null"
+O=$(renv HOME="$T/ph" FLEET_HOSTS="laptop studio" -- claude copy mcp sentry --from laptop --to studio 2>&1); RC=$?
+assert_contains "copying a plugin's server says to copy the plugin" "$O" "sentry on laptop comes from the sp@official plugin"
+assert_contains "  ...with the command"                  "$O" "fleet claude copy plugin sp@official"
+assert_eq "  ...and exits 1"                             "$RC" "1"
+assert_contains "rm of a server a Mac has only through a plugin is 'not on'" \
+  "$(renv HOME="$T/ph" FLEET_HOSTS="laptop studio" -- claude rm -y mcp sentry laptop 2>&1)" "ok    mcp sentry not on laptop"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
