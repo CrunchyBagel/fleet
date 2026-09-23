@@ -1376,6 +1376,82 @@ claude_unset_local() {   # <kind> <name>: remove the item from this Mac
   esac
 }
 
+# claude_copy <kind> <name> --from <host> --to <host...>|all: read the item's
+# full value on --from and make each target equal to it, one after another.
+# The value travels on stdin (never on an ssh command line) and is kept only
+# in a temp dir for the length of the copy. A plugin's marketplace goes first.
+claude_copy() {
+  local usage="usage: fleet claude copy <kind> <name> --from <host> --to <host...>|all"
+  local k="${1:-}" n="${2:-}" from="" to="" h tmp exec="" mkt=""
+  [ $# -ge 2 ] || die "$usage"
+  shift 2
+  claude_valid_kind "$k" || die "unknown kind '$k' (kinds: $CLAUDE_KINDS)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from) [ $# -ge 2 ] || die "$usage"; from=$(claude_host "$2") || exit 1; shift 2 ;;
+      --to) shift; while [ $# -gt 0 ] && [ "$1" != --from ]; do to="$to $1"; shift; done ;;
+      *) die "$usage" ;;
+    esac
+  done
+  [ -n "$from" ] && [ -n "$to" ] || die "$usage"
+  if [ "$to" = " all" ]; then
+    to=""; for h in $FLEET_HOSTS; do [ "$h" = "$from" ] || to="$to $h"; done
+  else
+    local t="$to"; to=""
+    for h in $t; do h=$(claude_host "$h") || exit 1; [ "$h" = "$from" ] || to="$to $h"; done
+  fi
+  [ -n "$to" ] || die "nothing to copy to: every target is $from"
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  run_on "$from" "fleet claude get --local $(shq "$k") $(shq "$n")" > "$tmp/value" 2>/dev/null || die "no $k '$n' on $from"
+  if [ "$k" = file ] && run_on "$from" "fleet claude --local" | jq -e --arg n "$n" 'any(.items[]; .kind == "file" and .name == $n and .exec)' >/dev/null; then
+    exec="--exec"
+  fi
+  if [ "$k" = plugin ]; then
+    mkt="${n##*@}"
+    run_on "$from" "fleet claude get --local marketplace $(shq "$mkt")" > "$tmp/mkt" 2>/dev/null \
+      || die "$n's marketplace $mkt is not known on $from"
+  fi
+  for h in $to; do
+    if [ -n "$mkt" ] && ! run_on "$h" "fleet claude set --local marketplace $(shq "$mkt")" < "$tmp/mkt" > "$tmp/out" 2>&1; then
+      fail "$k $n -> $h: $(tail -1 "$tmp/out" | sed 's/^fleet: //')"; continue
+    fi
+    if run_on "$h" "fleet claude set --local $(shq "$k") $(shq "$n") $exec" < "$tmp/value" > "$tmp/out" 2>&1; then
+      ok "$k $n -> $h"
+      sed "s/^/        $DIM/; s/\$/$RESET/" "$tmp/out"
+    else
+      fail "$k $n -> $h: $(tail -1 "$tmp/out" | sed 's/^fleet: //')"
+    fi
+  done
+  return "$DOCTOR_RC"
+}
+
+claude_rm() {   # [-y] <kind> <name> <host...>|all
+  local usage="usage: fleet claude rm [-y] <kind> <name> <host...>|all"
+  local yes=0 k n h hosts="" a tmp
+  if [ "${1:-}" = -y ] || [ "${1:-}" = --yes ]; then yes=1; shift; fi
+  [ $# -ge 3 ] || die "$usage"
+  k="$1" n="$2"; shift 2
+  claude_valid_kind "$k" || die "unknown kind '$k' (kinds: $CLAUDE_KINDS)"
+  for a in "$@"; do
+    if [ "$a" = all ]; then hosts=" $FLEET_HOSTS"; break; fi
+    h=$(claude_host "$a") || exit 1; hosts="$hosts $h"
+  done
+  if [ "$yes" != 1 ]; then
+    [ -t 0 ] || die "refusing to remove $k $n without -y"
+    printf 'remove %s %s on%s? [y/N] ' "$k" "$n" "$hosts"
+    read -r a </dev/tty
+    case "$a" in y|Y) ;; *) die "left as is" ;; esac
+  fi
+  tmp=$(mktemp)
+  trap 'rm -f "${tmp:-}"' RETURN
+  for h in $hosts; do
+    if run_on "$h" "fleet claude unset --local $(shq "$k") $(shq "$n")" > "$tmp" 2>&1 </dev/null; then ok "removed $k $n on $h"
+    else fail "$k $n on $h: $(tail -1 "$tmp" | sed 's/^fleet: //')"; fi
+  done
+  return "$DOCTOR_RC"
+}
+
 cmd_claude() {
   case "${1:-}" in
     --local) claude_snapshot_local; return 0 ;;
@@ -1383,6 +1459,8 @@ cmd_claude() {
       [ "${2:-}" = --local ] && [ -n "${4:-}" ] || die "usage: fleet claude $1 --local <kind> <name>"
       claude_valid_kind "$3" || die "unknown kind '$3' (kinds: $CLAUDE_KINDS)"
       "claude_$1_local" "$3" "$4" "${5:-}"; return ;;
+    copy) shift; claude_copy "$@"; return ;;
+    rm)   shift; claude_rm "$@"; return ;;
   esac
   claude_matrix_cmd "$@"
 }
@@ -2552,6 +2630,10 @@ fleet - Claude Code agent worktrees across your Macs
   fleet claude [--json] [--diff] [host...]
                                   how the Claude Code setup (plugins, MCP servers, settings,
                                   permission rules, CLAUDE.md, scripts) differs across the Macs
+  fleet claude copy <kind> <name> --from <host> --to <host...>|all
+  fleet claude rm [-y] <kind> <name> <host...>|all
+                                  make one item (kinds: marketplace plugin mcp setting perm file)
+                                  the same as another Mac's, or remove it; `this` = this Mac
   fleet projects [host] [--all] [--json]
                                   repos under FLEET_ROOT there, Claude-used first
                                   (--all: also folders that are not repos yet)

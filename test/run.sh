@@ -654,5 +654,42 @@ assert_false "unset file removes it"                   test -e "$C/scripts/new.s
 jq '.effortLevel = "high" | .permissions.defaultMode = "auto"' "$C/settings.json" > "$C/s.tmp" && mv "$C/s.tmp" "$C/settings.json"
 echo "# laptop rules" > "$C/CLAUDE.md"
 
+H2=(FLEET_HOSTS="laptop studio")
+O=$(renv "${H2[@]}" -- claude copy plugin superpowers@official --from this --to studio 2>&1)
+assert_contains "copy plugin reports each target"      "$O" "ok    plugin superpowers@official -> studio"
+assert_eq "  ...and studio has it enabled"             "$(jq -r '.enabledPlugins["superpowers@official"]' "$RH/.claude/settings.json")" "true"
+renv "${H2[@]}" -- claude copy plugin t@tools --from laptop --to studio >/dev/null 2>&1
+assert_eq "copy plugin brings its marketplace along"   "$(jq -r '.tools.source.repo' "$RH/.claude/plugins/known_marketplaces.json")" "acme/tools"
+assert_eq "  ...then the plugin"                       "$(jq -r '.enabledPlugins["t@tools"]' "$RH/.claude/settings.json")" "true"
+O=$(renv "${H2[@]}" -- claude copy mcp xcode --from studio --to this 2>&1)
+assert_eq "copy mcp moves the entry verbatim, secret included" "$(jq -c .mcpServers.xcode "$T/home/.claude.json")" '{"type":"stdio","command":"/usr/bin/xcrun","args":["mcpbridge"],"env":{"TOKEN":"sekrit-studio"}}'
+assert_lacks "  ...without printing it"                "$O" "sekrit"
+renv "${H2[@]}" -- claude copy setting effortLevel --from studio --to all >/dev/null 2>&1
+assert_eq "copy setting --to all"                      "$(jq -r .effortLevel "$T/home/.claude/settings.json")" "medium"
+renv "${H2[@]}" -- claude copy perm "allow:Bash(echo 'it''s')" --from laptop --to studio >/dev/null 2>&1
+assert_eq "copy perm over ssh keeps the quotes"        "$(jq -r --arg r "Bash(echo 'it''s')" 'any(.permissions.allow[]; . == $r)' "$RH/.claude/settings.json")" "true"
+assert_eq "  ...added to studio's own rules"           "$(jq -r '.permissions.allow | length' "$RH/.claude/settings.json")" "2"
+renv "${H2[@]}" -- claude copy file scripts/render.py --from this --to studio >/dev/null 2>&1
+assert_true "copy file: same content"                  cmp "$T/home/.claude/scripts/render.py" "$RH/.claude/scripts/render.py"
+assert_eq "  ...still executable"                      "$(stat -f %Lp "$RH/.claude/scripts/render.py")" "755"
+O=$(renv "${H2[@]}" -- claude copy mcp nope --from laptop --to studio 2>&1); RC=$?
+assert_contains "copy of something the source lacks"   "$O" "no mcp 'nope' on laptop"
+assert_eq "  ...exits 1"                               "$RC" "1"
+O=$(renv "${H2[@]}" FAKE_CLAUDE_REFUSE=only-studio@official -- claude copy plugin only-studio@official --from studio --to this 2>&1); RC=$?
+assert_contains "a refused plugin install fails that target" "$O" "FAIL  plugin only-studio@official -> laptop"
+assert_contains "  ...saying to do it by hand"         "$O" "by hand"
+assert_eq "  ...and exits 1"                           "$RC" "1"
+assert_contains "copy needs --from and --to"           "$(renv "${H2[@]}" -- claude copy plugin x 2>&1)" "usage: fleet claude copy"
+assert_contains "copy rejects an unknown host"         "$(renv "${H2[@]}" -- claude copy plugin x --from laptop --to nosuch 2>&1)" "unknown host"
+assert_eq "after copying, those rows agree"            "$(renv "${H2[@]}" -- claude --json | jq -r '[.items[] | select(.name == "effortLevel" or .name == "t@tools" or .name == "xcode") | .differs] | unique | join(",")')" "false"
+assert_contains "rm without -y and no tty refuses"     "$(renv "${H2[@]}" -- claude rm setting effortLevel all 2>&1 </dev/null)" "without -y"
+assert_eq "  ...and leaves it"                         "$(jq -r .effortLevel "$RH/.claude/settings.json")" "medium"
+O=$(renv "${H2[@]}" -- claude rm -y setting effortLevel all 2>&1)
+assert_contains "rm -y all removes it everywhere"      "$O" "ok    removed setting effortLevel on studio"
+assert_eq "  ...here"                                  "$(jq -r 'has("effortLevel")' "$T/home/.claude/settings.json")" "false"
+assert_eq "  ...and there"                             "$(jq -r 'has("effortLevel")' "$RH/.claude/settings.json")" "false"
+assert_contains "rm of a marketplace in use fails that host" "$(renv "${H2[@]}" -- claude rm -y marketplace tools studio 2>&1)" "remove them first"
+assert_contains "rm rejects an unknown kind"           "$(renv "${H2[@]}" -- claude rm -y skill x studio 2>&1)" "unknown kind"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
