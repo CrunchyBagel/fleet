@@ -1,3 +1,30 @@
 #!/bin/bash
+# Fake claude: logs every call. The `plugin` and `mcp` subcommands fleet uses
+# edit $HOME's settings.json, ~/.claude.json and known_marketplaces.json the
+# way the real CLI does, so `fleet claude --local` sees the result.
+# FAKE_CLAUDE_REFUSE=<plugin>: installing it fails the way a marketplace-
+# declared command does when nobody is there to accept it.
 echo "claude $*" >> "${SHIM_LOG:-/dev/null}"
+S="$HOME/.claude/settings.json" U="$HOME/.claude.json" M="$HOME/.claude/plugins/known_marketplaces.json"
+edit() {   # <file> <jq args...>
+  local f="$1"; shift
+  mkdir -p "$(dirname "$f")"; [ -s "$f" ] || echo '{}' > "$f"
+  jq "$@" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+case "${1:-} ${2:-}" in
+  "plugin install")
+    if [ "$3" = "${FAKE_CLAUDE_REFUSE:-}" ]; then echo "Error: this plugin runs a marketplace-declared command; rerun with --accept-command <sha256>" >&2; exit 1; fi
+    edit "$S" --arg p "$3" '.enabledPlugins[$p] = true' ;;
+  "plugin uninstall") edit "$S" --arg p "$3" 'del(.enabledPlugins[$p])' ;;
+  "plugin enable")    edit "$S" --arg p "$3" '.enabledPlugins[$p] = true' ;;
+  "plugin disable")   edit "$S" --arg p "$3" '.enabledPlugins[$p] = false' ;;
+  "plugin marketplace")
+    case "$3" in
+      add)    edit "$M" --arg r "$4" '.[$r | sub("^.*/"; "")] = {source: {source: "github", repo: $r}}' ;;
+      remove) edit "$M" --arg n "$4" 'del(.[$n])' ;;
+    esac ;;
+  # fleet calls: claude mcp add-json -s user <name> <json> / claude mcp remove -s user <name>
+  "mcp add-json") edit "$U" --arg n "$5" --argjson v "$6" '.mcpServers[$n] = $v' ;;
+  "mcp remove")   edit "$U" --arg n "$5" 'if (.mcpServers // {} | has($n)) then del(.mcpServers[$n]) else error("no MCP server \($n)") end' || exit 1 ;;
+esac
 exit 0

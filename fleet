@@ -1211,9 +1211,178 @@ claude_matrix_cmd() {   # [--json] [--diff] [host...]
   if [ -n "$(down_hosts "$tmp")" ]; then printf '%snot answering:\n%s%s\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"; fi
 }
 
+claude_valid_file() {   # CLAUDE.md or scripts/<name>: nothing that climbs out of ~/.claude
+  case "$1" in
+    CLAUDE.md) return 0 ;;
+    scripts/*) case "${1#scripts/}" in ''|*/*|.*) return 1 ;; *) return 0 ;; esac ;;
+    *) return 1 ;;
+  esac
+}
+
+claude_setting_ok() {   # a settings key the matrix compares (never fleet's own, never a whole permission list)
+  case " $CLAUDE_SKIP_KEYS permissions.allow permissions.deny permissions.ask " in *" $1 "*) return 1 ;; esac
+  case "$1" in ''|*State|*Cache|*Timestamp) return 1 ;; *) return 0 ;; esac
+}
+
+claude_perm_split() {   # allow:<rule> -> "allow<TAB><rule>" (split on the first colon only)
+  local l="${1%%:*}" rule="${1#*:}"
+  case "$l" in allow|deny|ask) ;; *) die "perm names are allow:<rule>, deny:<rule> or ask:<rule>" ;; esac
+  [ "$rule" != "$1" ] && [ -n "$rule" ] || die "perm names are allow:<rule>, deny:<rule> or ask:<rule>"
+  printf '%s\t%s' "$l" "$rule"
+}
+
+# jq path of a setting name: permissions.<k> is that subkey, anything else top level.
+# shellcheck disable=SC2016  # $n is a jq variable
+CLAUDE_SETTING_PATH='(if ($n | startswith("permissions.")) then ["permissions", $n[12:]] else [$n] end)'
+
+# claude_settings_edit <jq args...>: rewrite ~/.claude/settings.json through
+# jq, the way install_hooks does: refuse a file that is not JSON, back it up
+# once (settings.json.fleet-backup), write a temp file and move it in place.
+claude_settings_edit() {
+  local f="$HOME/.claude/settings.json" tmp
+  mkdir -p "$(dirname "$f")"
+  [ -s "$f" ] || echo '{}' > "$f"
+  jq -e 'type == "object"' "$f" >/dev/null 2>&1 || die "$f is not valid JSON; fix it by hand first"
+  [ -e "$f.fleet-backup" ] || cp "$f" "$f.fleet-backup"
+  tmp=$(mktemp "$f.XXXXXX")
+  jq "$@" "$f" > "$tmp" || { rm -f "$tmp"; die "could not edit $f"; }
+  mv "$tmp" "$f"
+}
+
+# claude_get_local <kind> <name>: the item's full value as JSON (a file: its
+# content), secrets included: this is what `copy` sends. Exit 1 when absent.
+claude_get_local() {
+  local k="$1" n="$2" s="$HOME/.claude/settings.json" out="" lr
+  case "$k" in
+    file)
+      claude_valid_file "$n" && [ -f "$HOME/.claude/$n" ] || return 1
+      cat "$HOME/.claude/$n"; return 0 ;;
+    marketplace)
+      out=$(jq -c --arg n "$n" 'if has($n) then .[$n].source else empty end' "$(claude_src "$HOME/.claude/plugins/known_marketplaces.json")") ;;
+    plugin)   # false is "disabled", not absent: no // here
+      out=$(jq -c --arg n "$n" '(.enabledPlugins // {}) | if has($n) then (if .[$n] == true then "enabled" else "disabled" end) else empty end' "$(claude_src "$s")") ;;
+    mcp)
+      out=$(jq -c --arg n "$n" '(.mcpServers // {}) | if has($n) then .[$n] else empty end' "$(claude_src "$HOME/.claude.json")") ;;
+    setting)
+      claude_setting_ok "$n" || return 1
+      out=$(jq -c --arg n "$n" "$CLAUDE_SETTING_PATH as \$p | getpath(\$p) | if . == null then empty else . end" "$(claude_src "$s")") ;;
+    perm)
+      lr=$(claude_perm_split "$n") || return 1
+      out=$(jq -c --arg l "${lr%%	*}" --arg r "${lr#*	}" 'if any(.permissions[$l]? // [] | .[]; . == $r) then true else empty end' "$(claude_src "$s")") ;;
+  esac
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+claude_file_put() {   # <name> [--exec]: content on stdin -> ~/.claude/<name>
+  local f="$HOME/.claude/$1" tmp
+  claude_valid_file "$1" || die "files are CLAUDE.md or scripts/<name>"
+  mkdir -p "$(dirname "$f")"
+  [ ! -e "$f" ] || [ -e "$f.fleet-backup" ] || cp -p "$f" "$f.fleet-backup"
+  tmp=$(mktemp "$f.XXXXXX")
+  cat > "$tmp"
+  if [ "${2:-}" = --exec ]; then chmod 755 "$tmp"; else chmod 644 "$tmp"; fi
+  mv "$tmp" "$f"
+  echo "wrote ~/.claude/$1"
+}
+
+# claude_run <what> <cmd...>: run a claude CLI command, dying with its last line.
+claude_run() {
+  local what="$1" out; shift
+  command -v claude >/dev/null 2>&1 || die "claude not found on $FLEET_SELF (PATH=$PATH)"
+  out=$("$@" 2>&1) || die "$what: $(printf '%s\n' "$out" | tail -1)"
+}
+
+# claude_set_local <kind> <name> [--exec]: make this Mac's item equal to the
+# value on stdin (JSON; a file's raw content). Plugins, marketplaces and MCP
+# servers go through Claude Code's own CLI; settings and rules through jq.
+claude_set_local() {
+  local k="$1" n="$2" v src cur lr
+  if [ "$k" = file ]; then claude_file_put "$n" "${3:-}"; return 0; fi
+  v=$(cat)
+  [ "$k" = perm ] && v=true   # a rule's value is its presence
+  printf '%s' "$v" | jq -e . >/dev/null 2>&1 || die "not JSON on stdin"
+  case "$k" in
+    marketplace)
+      if claude_get_local marketplace "$n" >/dev/null; then echo "marketplace $n already known"; return 0; fi
+      src=$(printf '%s' "$v" | jq -r 'if .source == "github" then .repo elif .source == "git" or .source == "url" then .url else "" end // ""')
+      [ -n "$src" ] || die "marketplace $n comes from a local path; add it on $FLEET_SELF by hand (claude plugin marketplace add <path>)"
+      claude_run "claude plugin marketplace add $src" claude plugin marketplace add "$src"
+      echo "added marketplace $n" ;;
+    plugin)
+      case "$v" in '"enabled"'|'"disabled"') ;; *) die "a plugin's value is \"enabled\" or \"disabled\"" ;; esac
+      if ! claude_get_local plugin "$n" >/dev/null; then
+        claude_run "claude plugin install $n (install it on $FLEET_SELF by hand)" claude plugin install "$n" --scope user
+      fi
+      cur=$(claude_get_local plugin "$n" || true)
+      if [ "$cur" != "$v" ]; then
+        if [ "$v" = '"disabled"' ]; then claude_run "claude plugin disable $n" claude plugin disable "$n" --scope user
+        else claude_run "claude plugin enable $n" claude plugin enable "$n" --scope user; fi
+      fi
+      echo "plugin $n ${v//\"/}" ;;
+    mcp)
+      claude mcp remove -s user "$n" >/dev/null 2>&1 || true
+      claude_run "claude mcp add-json $n" claude mcp add-json -s user "$n" "$v"
+      echo "added MCP server $n"
+      case "$(printf '%s' "$v" | jq -r '.type // "stdio"')" in
+        http|sse) echo "if it signs in (OAuth), authenticate it on $FLEET_SELF with /mcp" ;;
+      esac ;;
+    setting)
+      claude_setting_ok "$n" || die "$n is not a setting fleet compares"
+      claude_settings_edit --arg n "$n" --argjson v "$v" "$CLAUDE_SETTING_PATH as \$p | setpath(\$p; \$v)"
+      echo "set $n" ;;
+    perm)
+      lr=$(claude_perm_split "$n") || exit 1
+      # shellcheck disable=SC2016  # $l and $r are jq variables
+      claude_settings_edit --arg l "${lr%%	*}" --arg r "${lr#*	}" \
+        '.permissions[$l] = ((.permissions[$l] // []) | if any(.[]; . == $r) then . else . + [$r] end)'
+      echo "added $n" ;;
+  esac
+}
+
+claude_unset_local() {   # <kind> <name>: remove the item from this Mac
+  local k="$1" n="$2" lr f
+  case "$k" in
+    marketplace)
+      if jq -e --arg n "$n" '(.enabledPlugins // {}) | any(to_entries[]; .value == true and (.key | endswith("@" + $n)))' \
+           "$(claude_src "$HOME/.claude/settings.json")" >/dev/null 2>&1; then
+        die "plugins from $n are enabled on $FLEET_SELF; remove them first"
+      fi
+      claude_run "claude plugin marketplace remove $n" claude plugin marketplace remove "$n"
+      echo "removed marketplace $n" ;;
+    plugin)
+      claude_run "claude plugin uninstall $n" claude plugin uninstall "$n" --scope user
+      echo "removed plugin $n" ;;
+    mcp)
+      claude_run "claude mcp remove $n" claude mcp remove -s user "$n"
+      echo "removed MCP server $n" ;;
+    setting)
+      claude_setting_ok "$n" || die "$n is not a setting fleet compares"
+      claude_settings_edit --arg n "$n" "$CLAUDE_SETTING_PATH as \$p | delpaths([\$p])"
+      echo "removed $n" ;;
+    perm)
+      lr=$(claude_perm_split "$n") || exit 1
+      # shellcheck disable=SC2016  # $l and $r are jq variables
+      claude_settings_edit --arg l "${lr%%	*}" --arg r "${lr#*	}" \
+        'if .permissions[$l] then .permissions[$l] |= map(select(. != $r)) else . end'
+      echo "removed $n" ;;
+    file)
+      claude_valid_file "$n" || die "files are CLAUDE.md or scripts/<name>"
+      f="$HOME/.claude/$n"
+      [ -e "$f" ] || { echo "no ~/.claude/$n"; return 0; }
+      [ -e "$f.fleet-backup" ] || cp -p "$f" "$f.fleet-backup"
+      rm -f "$f"
+      echo "removed ~/.claude/$n" ;;
+  esac
+}
+
 cmd_claude() {
   case "${1:-}" in
     --local) claude_snapshot_local; return 0 ;;
+    get|set|unset)
+      [ "${2:-}" = --local ] && [ -n "${4:-}" ] || die "usage: fleet claude $1 --local <kind> <name>"
+      claude_valid_kind "$3" || die "unknown kind '$3' (kinds: $CLAUDE_KINDS)"
+      "claude_$1_local" "$3" "$4" "${5:-}"; return ;;
   esac
   claude_matrix_cmd "$@"
 }

@@ -581,5 +581,78 @@ assert_lacks "  ...and gets no column"                 "$(renv FLEET_HOSTS="lapt
 assert_lacks "claude <host> asks that host only"       "$(renv FLEET_HOSTS="laptop studio" -- claude studio | head -1)" "laptop"
 assert_contains "claude rejects an unknown host"       "$(renv FLEET_HOSTS="laptop studio" -- claude nosuch 2>&1)" "unknown host"
 
+C="$T/home/.claude"
+assert_eq "get --local: a setting's value"             "$(run claude get --local setting effortLevel)" '"high"'
+assert_eq "get --local: a disabled plugin"             "$(run claude get --local plugin off@official)" '"disabled"'
+assert_false "get --local: absent is exit 1"           run claude get --local mcp nope
+: > "$SHIM_LOG"
+assert_contains "set marketplace adds it through claude" "$(printf '{"source":"github","repo":"acme/extras"}' | run claude set --local marketplace extras)" "added marketplace extras"
+assert_contains "  ...via claude plugin marketplace add" "$(cat "$SHIM_LOG")" "claude plugin marketplace add acme/extras"
+: > "$SHIM_LOG"
+assert_contains "set marketplace already known is a no-op" "$(printf '{"source":"github","repo":"acme/extras"}' | run claude set --local marketplace extras)" "already known"
+assert_eq "  ...without calling claude"                "$(cat "$SHIM_LOG")" ""
+assert_contains "set marketplace from a local path is refused" "$(printf '{"source":"directory","path":"/x"}' | run claude set --local marketplace localmk 2>&1)" "by hand"
+: > "$SHIM_LOG"
+printf '"enabled"' | run claude set --local plugin new@official >/dev/null
+assert_eq "set plugin installs it enabled"             "$(jq -r '.enabledPlugins["new@official"]' "$C/settings.json")" "true"
+assert_contains "  ...via claude plugin install --scope user" "$(cat "$SHIM_LOG")" "claude plugin install new@official --scope user"
+printf '"disabled"' | run claude set --local plugin new@official >/dev/null
+assert_eq "set plugin disabled keeps it installed, disabled" "$(jq -r '.enabledPlugins["new@official"]' "$C/settings.json")" "false"
+O=$(printf '"enabled"' | renv FAKE_CLAUDE_REFUSE=bad@official -- claude set --local plugin bad@official 2>&1); RC=$?
+assert_eq "a plugin claude will not install unattended fails" "$RC" "1"
+assert_contains "  ...and says to install it by hand"  "$O" "install it on laptop by hand"
+O=$(printf '{"type":"http","url":"https://mcp.example.com/mcp","headers":{"Authorization":"Bearer sekrit"}}' | run claude set --local mcp example)
+assert_eq "set mcp writes the whole entry"             "$(jq -r '.mcpServers.example.headers.Authorization' "$T/home/.claude.json")" "Bearer sekrit"
+assert_contains "  ...and reminds to sign in for http" "$O" "/mcp"
+assert_lacks "  ...without echoing the secret"         "$O" "sekrit"
+rm -f "$C/settings.json.fleet-backup"
+printf '"low"' | run claude set --local setting effortLevel >/dev/null
+assert_eq "set setting"                                "$(jq -r .effortLevel "$C/settings.json")" "low"
+assert_true "  ...backing settings.json up first"      test -e "$C/settings.json.fleet-backup"
+printf '"plan"' | run claude set --local setting permissions.defaultMode >/dev/null
+assert_eq "set a permissions.* setting"                "$(jq -r .permissions.defaultMode "$C/settings.json")" "plan"
+assert_contains "set refuses fleet's own keys"         "$(printf '{}' | run claude set --local setting hooks 2>&1)" "not a setting fleet compares"
+assert_contains "set refuses the permission lists as a whole" "$(printf '[]' | run claude set --local setting permissions.allow 2>&1)" "not a setting fleet compares"
+assert_contains "set refuses input that is not JSON"   "$(printf 'nope' | run claude set --local setting effortLevel 2>&1)" "not JSON"
+cp "$C/settings.json" "$T/settings.good"; echo 'half {' > "$C/settings.json"
+assert_contains "set refuses to rewrite a settings.json that is not JSON" "$(printf '"x"' | run claude set --local setting effortLevel 2>&1)" "not valid JSON"
+assert_eq "  ...leaving it as it was"                  "$(cat "$C/settings.json")" "half {"
+cp "$T/settings.good" "$C/settings.json"
+R="Bash(say 'a:b' \"c\")"
+run claude set --local perm "allow:$R" </dev/null >/dev/null; run claude set --local perm "allow:$R" </dev/null >/dev/null
+assert_eq "set perm adds a rule once, quotes and colons intact" "$(jq --arg r "$R" '[.permissions.allow[] | select(. == $r)] | length' "$C/settings.json")" "1"
+assert_contains "set perm needs allow:, deny: or ask:" "$(run claude set --local perm "maybe:x" </dev/null 2>&1)" "allow:<rule>"
+printf '#!/bin/sh\necho x\n' | run claude set --local file scripts/new.sh --exec >/dev/null
+assert_eq "set file writes it, executable when asked"  "$(stat -f %Lp "$C/scripts/new.sh")" "755"
+echo "# first" > "$C/CLAUDE.md"; rm -f "$C/CLAUDE.md.fleet-backup"
+echo "# second" | run claude set --local file CLAUDE.md >/dev/null
+echo "# third" | run claude set --local file CLAUDE.md >/dev/null
+assert_eq "set file replaces the content"              "$(cat "$C/CLAUDE.md")" "# third"
+assert_eq "  ...backing up the original once"          "$(cat "$C/CLAUDE.md.fleet-backup")" "# first"
+echo x | run claude set --local file scripts/new.sh >/dev/null; echo y | run claude set --local file scripts/new.sh >/dev/null
+assert_eq "a script's backup is not a file row"        "$(run claude --local | jq -r '[.items[] | select(.name | endswith(".fleet-backup"))] | length')" "0"
+assert_contains "set file refuses paths out of ~/.claude" "$(echo x | run claude set --local file ../evil 2>&1)" "CLAUDE.md or scripts/<name>"
+assert_contains "  ...and into subfolders"             "$(echo x | run claude set --local file scripts/a/b 2>&1)" "CLAUDE.md or scripts/<name>"
+assert_contains "set refuses an unknown kind"          "$(echo x | run claude set --local skill foo 2>&1)" "unknown kind"
+: > "$SHIM_LOG"; run claude unset --local plugin new@official >/dev/null
+assert_eq "unset plugin uninstalls it"                 "$(jq -r '.enabledPlugins | has("new@official")' "$C/settings.json")" "false"
+assert_contains "  ...via claude plugin uninstall"     "$(cat "$SHIM_LOG")" "claude plugin uninstall new@official --scope user"
+assert_contains "unset marketplace with plugins enabled is refused" "$(run claude unset --local marketplace official 2>&1)" "remove them first"
+run claude unset --local marketplace extras >/dev/null
+assert_eq "unset marketplace"                          "$(jq -r 'has("extras")' "$C/plugins/known_marketplaces.json")" "false"
+run claude unset --local mcp example >/dev/null
+assert_eq "unset mcp"                                  "$(jq -r '.mcpServers | has("example")' "$T/home/.claude.json")" "false"
+run claude unset --local setting permissions.defaultMode >/dev/null
+assert_eq "unset setting"                              "$(jq -r '.permissions | has("defaultMode")' "$C/settings.json")" "false"
+assert_contains "unset refuses fleet's own keys"       "$(run claude unset --local setting statusLine 2>&1)" "not a setting fleet compares"
+assert_eq "  ...and statusLine is still there"         "$(jq -r '.statusLine.command' "$C/settings.json")" "x"
+run claude unset --local perm "allow:$R" >/dev/null
+assert_eq "unset perm removes that rule only"          "$(jq -r '.permissions.allow | length' "$C/settings.json")" "2"
+run claude unset --local file scripts/new.sh >/dev/null
+assert_false "unset file removes it"                   test -e "$C/scripts/new.sh"
+# Put the laptop back the way Task 4's tests expect it.
+jq '.effortLevel = "high" | .permissions.defaultMode = "auto"' "$C/settings.json" > "$C/s.tmp" && mv "$C/s.tmp" "$C/settings.json"
+echo "# laptop rules" > "$C/CLAUDE.md"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
