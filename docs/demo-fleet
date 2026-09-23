@@ -103,5 +103,18 @@ case "${1:-} ${2:-}" in
                      {id: "claude-opus-4-8", name: "Opus 4.8", short_name: "Opus", section: "overflow"}]}' ;;
   "doctor "*)      printf '  ok    fleet is linked at ~/bin/fleet\n  ok    git, jq, tmux, fzf found\n  ok    Claude Code hooks installed\n  ok    status line installed\n  ok    host list matches this Mac\n' ;;
   "claude --json") sleep 1; claude_setup ;;
+  # claude copy <kind> <name> --from <mac> --to <mac...>: an ok line per
+  # target, slowly, so the app's status line can be seen streaming. An item
+  # named "nope" is missing on the source, which fleet reports on stderr.
+  "claude copy")   [ "$4" != nope ] || { echo "fleet: no $3 '$4' on $6" >&2; exit 1; }
+                   for t in "${@:8}"; do sleep 0.5; printf '  ok    %s %s -> %s\n' "$3" "$4" "$t"; done ;;
+  # claude rm -y <kind> <name> <mac...>; mini's xcode fails, to show the banner.
+  "claude rm")     for t in "${@:6}"; do
+                     sleep 0.5
+                     if [ "$4 $5 $t" = "mcp xcode mini" ]; then
+                       printf '  FAIL  mcp xcode on mini: claude mcp remove xcode: No MCP server named xcode\n'; exit 1
+                     fi
+                     printf '  ok    removed %s %s on %s\n' "$4" "$5" "$t"
+                   done ;;
   *)               : ;;
 esac

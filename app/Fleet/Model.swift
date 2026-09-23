@@ -66,6 +66,7 @@ final class FleetModel: ObservableObject {
     @Published var claudeSetupError: String?           // the last load failed; the last good matrix stays
     @Published var claudeSetupLoading = false
     @Published var claudeShowRules = false             // permission rules expanded, kept while the app runs
+    @Published var claudeConfirmRemove: ClaudeRemoval?  // the Remove… dialog is up for this
     @Published var claudeSelected: String?             // the row the inspector shows (ClaudeItem.id), kept across reloads
     @Published var claudeAction: String?               // what the last copy/remove printed
     @Published var claudeActionRunning = false

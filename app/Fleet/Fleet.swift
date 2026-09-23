@@ -191,6 +191,18 @@ struct FleetCLI {
     static func claudeSetup() async throws -> ClaudeSetup {
         try await decode(ClaudeSetup.self, from: run(["claude", "--json"], timeout: pollTimeout))
     }
+    /// `fleet claude copy <kind> <name> --from <from> --to <to...>`, its
+    /// `ok`/`FAIL` lines streamed. Arguments go as argv, so a permission
+    /// rule's quotes and parentheses need no quoting.
+    static func claudeCopy(kind: String, name: String, from: String, to: [String],
+                           progress: @escaping @Sendable (String) -> Void) async throws {
+        try await runStreaming(["claude", "copy", kind, name, "--from", from, "--to"] + to, onLine: progress)
+    }
+    /// `fleet claude rm -y <kind> <name> <host>` (the app has asked already).
+    static func claudeRemove(kind: String, name: String, host: String,
+                             progress: @escaping @Sendable (String) -> Void) async throws {
+        try await runStreaming(["claude", "rm", "-y", kind, name, host], onLine: progress)
+    }
     static func attach(host: String, session: String, terminal: Terminal) async throws {
         try await run(["attach", host, session], env: ["FLEET_TERM": terminal.rawValue])
     }

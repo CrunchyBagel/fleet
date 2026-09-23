@@ -40,6 +40,18 @@ struct ClaudeSetupView: View {
                 }
             }
             .task { model.loadClaudeSetup() }
+            .onDisappear { if !model.claudeActionRunning { model.claudeAction = nil } }
+            .confirmationDialog(
+                "Remove \(model.claudeConfirmRemove?.item.displayName ?? "") from \(model.claudeConfirmRemove?.host ?? "")?",
+                isPresented: Binding(get: { model.claudeConfirmRemove != nil }, set: { if !$0 { model.claudeConfirmRemove = nil } }),
+                presenting: model.claudeConfirmRemove
+            ) { r in
+                Button("Remove", role: .destructive) { model.claudeRemove(r.item, from: r.host) }
+            } message: { r in
+                Text(r.item.kind == "file" || r.item.kind == "setting" || r.item.kind == "perm"
+                     ? "fleet claude rm runs on \(r.host). The file it changes is backed up once as .fleet-backup."
+                     : "fleet claude rm runs on \(r.host) and removes it through Claude Code.")
+            }
     }
 
     private var subtitle: String {
@@ -164,12 +176,58 @@ struct ClaudeInspector: View {
                         Text(item.detail(h, versions: versions))
                             .foregroundStyle(.secondary).textSelection(.enabled)
                             .padding(.leading, 30)
+                        if item.kind != "error" {
+                            actions(h).padding(.leading, 30).padding(.top, 2)
+                                .controlSize(.small).disabled(model.claudeActionRunning)
+                        }
                     }
                     Divider()
+                }
+                if let out = model.claudeAction, !out.isEmpty || model.claudeActionRunning {
+                    HStack(alignment: .top, spacing: 8) {
+                        if model.claudeActionRunning { ProgressView().controlSize(.small) }
+                        Text(out.isEmpty ? "Starting…" : out).font(.caption.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                 }
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    /// What can be done from this Mac: copy its version to the Macs that
+    /// lack it or differ, or remove it here; or, when it lacks the item, get
+    /// it from a Mac that has it. Only the Macs that answered are offered.
+    @ViewBuilder private func actions(_ h: String) -> some View {
+        let others = hosts.filter { $0 != h }
+        if let c = item.cell(h) {
+            HStack(spacing: 8) {
+                let behind = others.filter { item.cell($0)?.digest != c.digest }
+                if !behind.isEmpty {
+                    Menu {
+                        ForEach(behind, id: \.self) { o in Button("Copy to \(o) Only") { model.claudeCopy(item, from: h, to: [o]) } }
+                    } label: {
+                        Text(behind.count == others.count && others.count > 1 ? "Copy to Others" : "Copy to " + behind.formatted(.list(type: .and)))
+                    } primaryAction: {
+                        model.claudeCopy(item, from: h, to: behind)
+                    }
+                    .fixedSize()
+                    .help("Make \(behind.formatted(.list(type: .and))) match \(h)")
+                }
+                Button("Remove…", role: .destructive) { model.claudeConfirmRemove = ClaudeRemoval(item: item, host: h) }
+                    .help("Remove it from \(h)")
+            }
+        } else {
+            let sources = others.filter { item.cell($0) != nil }
+            if sources.count == 1 {
+                Button("Get from \(sources[0])") { model.claudeCopy(item, from: sources[0], to: [h]) }
+            } else if !sources.isEmpty {
+                Menu("Get from") {
+                    ForEach(sources, id: \.self) { o in Button(o) { model.claudeCopy(item, from: o, to: [h]) } }
+                }
+                .fixedSize()
+            }
         }
     }
     private func symbol(_ h: String) -> String {
@@ -182,4 +240,11 @@ struct ClaudeInspector: View {
         if item.kind == "error" || (item.kind == "plugin" && c.summary == "disabled") { return .orange }
         return .green
     }
+}
+
+/// A removal waiting for its confirmation.
+struct ClaudeRemoval: Identifiable {
+    let item: ClaudeItem
+    let host: String
+    var id: String { item.id + "\u{1F}" + host }
 }

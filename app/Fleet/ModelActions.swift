@@ -150,4 +150,41 @@ extension FleetModel {
             claudeSetupLoading = false
         }
     }
+
+    func claudeCopy(_ item: ClaudeItem, from: String, to: [String]) {
+        claudeRun("claude copy") { p in try await FleetCLI.claudeCopy(kind: item.kind, name: item.name, from: from, to: to, progress: p) }
+    }
+    func claudeRemove(_ item: ClaudeItem, from host: String) {
+        claudeRun("claude rm") { p in try await FleetCLI.claudeRemove(kind: item.kind, name: item.name, host: host, progress: p) }
+    }
+    /// One copy or remove at a time. Its lines stream into the status line;
+    /// a failure also goes to the banner, as the FAIL line when there is one,
+    /// else fleet's own message (stderr); the matrix reloads either way.
+    private func claudeRun(_ what: String, _ op: @escaping (@escaping @Sendable (String) -> Void) async throws -> Void) {
+        guard !claudeActionRunning else { return }
+        actionError = nil
+        claudeActionRunning = true
+        claudeAction = ""
+        Task {
+            do {
+                try await op { line in
+                    Task { @MainActor in
+                        let soFar = self.claudeAction ?? ""
+                        self.claudeAction = soFar.isEmpty ? line : soFar + "\n" + line
+                    }
+                }
+            } catch {
+                await Task.yield()                          // let the last streamed lines land first
+                let lines = (claudeAction ?? "").split(separator: "\n").map(String.init)
+                var stderrLine: String?
+                if case let FleetError.failed(_, _, err) = error {
+                    stderrLine = err.split(separator: "\n").last.map { $0.trimmingCharacters(in: .whitespaces) }
+                }
+                let why = lines.last { $0.hasPrefix("FAIL") } ?? stderrLine ?? error.localizedDescription
+                actionError = "\(what): \(why)"
+            }
+            claudeActionRunning = false
+            loadClaudeSetup()
+        }
+    }
 }

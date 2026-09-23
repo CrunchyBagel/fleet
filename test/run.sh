@@ -751,5 +751,18 @@ assert_eq "  ...never a value field"                   "$(printf '%s' "$D" | jq 
 assert_eq "  ...differs agrees with the cells"        "$(printf '%s' "$D" | jq -r 'all(.items[]; .differs == ([.cells[] | if . == null then null else .digest end] | unique | length > 1))')" "true"
 assert_eq "  ...with every kind"                      "$(printf '%s' "$D" | jq -r '[.items[].kind] | unique | join(",")')" "file,marketplace,mcp,perm,plugin,setting"
 
+O=$(PATH="/usr/bin:/bin" "$DEMO" claude copy perm "allow:Bash(echo 'it''s')" --from studio --to mini mbp16)
+assert_contains "demo-fleet claude copy prints an ok line per target" "$O" "ok    perm allow:Bash(echo 'it''s') -> mbp16"
+assert_eq "  ...one per target"                       "$(printf '%s\n' "$O" | grep -c '^  ok ')" "2"
+O=$(PATH="/usr/bin:/bin" "$DEMO" claude rm -y plugin swift-lsp@claude-plugins-official mbp16); RC=$?
+assert_contains "demo-fleet claude rm prints ok"      "$O" "ok    removed plugin swift-lsp@claude-plugins-official on mbp16"
+assert_eq "  ...exit 0"                               "$RC" "0"
+O=$(PATH="/usr/bin:/bin" "$DEMO" claude rm -y mcp xcode mini); RC=$?
+assert_contains "demo-fleet: removing mini's xcode fails, for the banner" "$O" "FAIL  mcp xcode on mini"
+assert_eq "  ...exit 1"                               "$RC" "1"
+O=$(PATH="/usr/bin:/bin" "$DEMO" claude copy mcp nope --from studio --to mini 2>&1 >/dev/null); RC=$?
+assert_contains "demo-fleet: a copy that dies says so on stderr only" "$O" "fleet: no mcp 'nope' on studio"
+assert_eq "  ...exit 1"                               "$RC" "1"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
