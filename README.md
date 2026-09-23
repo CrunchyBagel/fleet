@@ -137,6 +137,21 @@ line reports the model, context use, cost and your account's usage limits.
 Nothing is scraped from the terminal. An agent started outside tmux does
 not report and shows as `◦ alive`.
 
+## Keeping Claude setups aligned
+
+Each Mac collects its own plugins, MCP servers, settings and permission
+rules. `fleet claude` shows them side by side (`--diff` for just the
+differences), and you fix one row at a time:
+
+    fleet claude --diff
+    fleet claude copy plugin superpowers@claude-plugins-official --from this --to all
+    fleet claude copy mcp xcode --from mini --to this
+    fleet claude copy perm "allow:Bash(git log:*)" --from this --to studio
+    fleet claude rm plugin swift-lsp@claude-plugins-official laptop
+
+Nothing changes unless you run `copy` or `rm`. An http MCP server that signs
+in with OAuth has to be authenticated once on the new Mac (`/mcp`).
+
 ## Opening a checkout
 
 `fleet open` fetches the session's branch into the local clone (or a local

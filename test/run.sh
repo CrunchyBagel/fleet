@@ -691,5 +691,10 @@ assert_eq "  ...and there"                             "$(jq -r 'has("effortLeve
 assert_contains "rm of a marketplace in use fails that host" "$(renv "${H2[@]}" -- claude rm -y marketplace tools studio 2>&1)" "remove them first"
 assert_contains "rm rejects an unknown kind"           "$(renv "${H2[@]}" -- claude rm -y skill x studio 2>&1)" "unknown kind"
 
+O=$(renv FLEET_HOSTS="laptop studio" -- doctor 2>&1)
+assert_contains "doctor across Macs says the Claude setups differ" "$O" "claude setup differs on"
+assert_contains "  ...pointing at fleet claude --diff" "$O" "(fleet claude --diff)"
+assert_lacks "doctor <host> does not"                   "$(renv FLEET_HOSTS="laptop studio" -- doctor studio 2>&1)" "claude setup"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

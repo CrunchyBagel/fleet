@@ -121,6 +121,16 @@ piece buys an attacker, what fleet does about it, and what only you can do.
   command or app from your own config; it is given the directory. Nothing
   from the repository being opened decides what runs.
 
+- **`fleet claude` moves secrets only when asked.** It compares Claude Code
+  setups across your Macs. MCP server entries and the `env` setting can hold
+  tokens, so a Mac reports them only as a sha256 digest, and neither the
+  table nor `--json` prints them.
+  `fleet claude copy` moves the real value from one of your Macs to another
+  over the same ssh fleet already uses, on stdin, only when you ask, and keeps
+  it only in a temp directory while it runs. Plugin installs go through
+  `claude plugin install` without `-y`: a plugin whose marketplace wants to run
+  a command is refused and left for you to install by hand.
+
 ## What only you can do
 
 - **Tailscale ACLs.** Allow ssh (port 22) only from your control machines to

@@ -18,6 +18,8 @@ whoever runs it.
 5. Not a git client. No diffs, no history, no staging. Ever.
 6. Git is the only transport between machines, including for installing fleet
    itself (`fleet install` clones/pulls this repo). Nothing is file-synced.
+   `fleet claude copy` is not an exception: it is a per-item push over ssh
+   that the owner starts, like `hosts push`, and nothing syncs by itself.
 7. Anything to be debugged is built locally by Xcode on the Mac in front of the
    owner. Remote machines never produce runnable artifacts.
 
@@ -121,7 +123,7 @@ whoever runs it.
   fast-forwarding, opening) as dim lines; the app streams those into the
   session view while the button is busy.
 - Commands: `ls` (default), `attach|a`, `open|o`, `new|n`, `projects|p`,
-  `models`, `shell`, `kill|stop`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models`, `claude`, `shell`, `kill|stop`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
   `models [host] [--json]` (`models_local` on the host) = what Claude Code
   there can start with: `{default, models: [{id, name, short_name,
   section}]}` plus `host` in the `--json` form. There is no `claude models`;
@@ -133,6 +135,23 @@ whoever runs it.
   unknown. `new ... --model <m>` (anywhere on the line, alias or id) appends
   `--model <m>` to the claude command; without it nothing is passed, so
   Claude Code's own default (including a `[1m]` variant) applies.
+  `claude [--json] [--diff] [host...]` = how the Claude Code setup differs
+  across the Macs, one row per item: `marketplace` (known_marketplaces.json),
+  `plugin` (`enabledPlugins`, enabled/disabled), `mcp` (user-scope
+  `mcpServers` in `~/.claude.json`), `setting` (settings.json top-level keys
+  and `permissions.<k>`, minus `CLAUDE_SKIP_KEYS` and `*State|*Cache|*Timestamp`),
+  `perm` (one row per `permissions.allow|deny|ask` rule, so separately grown
+  allowlists are not clobbered), `file` (`~/.claude/CLAUDE.md`,
+  `scripts/*`). Each host answers `claude --local` (`claude_snapshot_local`,
+  `{version, items:[{kind,name,value,summary,digest[,exec]}]}`; mcp entries
+  and the `env` setting leave only as a sha256 digest), gathered with
+  `gather_into … claude_fetch`. There is no reference Mac: `claude copy
+  <kind> <name> --from H --to H…|all` reads the full value there
+  (`claude get --local`) and pipes it into `claude set --local` on each
+  target (claude CLI for plugin/marketplace/mcp, never `-y`; jq with a
+  one-time `.fleet-backup` for settings/perm; temp file + mv for files).
+  `claude rm [-y]` runs `claude unset --local`. Fan-out doctor adds one
+  informational "claude setup differs" line.
   `keys add "<openssh line>"` (validated to one `<type> <base64> [comment]`
   line, `valid_pubkey`) appends to `~/.ssh/authorized_keys` here and on every
   reachable host via `keys_script` (umask 077, idempotent); `keys rm

@@ -1452,6 +1452,18 @@ claude_rm() {   # [-y] <kind> <name> <host...>|all
   return "$DOCTOR_RC"
 }
 
+# For `fleet doctor` across every host: one line, informational (a Mac may
+# differ on purpose), never FAIL.
+claude_doctor_line() {
+  local tmp n
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  gather_into "$tmp" "" claude_fetch
+  n=$(claude_matrix "$tmp" | jq '[.items[] | select(.differs)] | length')
+  if [ "$n" -eq 0 ]; then ok "claude setup is the same on every Mac that answered"
+  else printf '%s  · claude setup differs on %s item(s) (fleet claude --diff)%s\n' "$DIM" "$n" "$RESET"; fi
+}
+
 cmd_claude() {
   case "${1:-}" in
     --local) claude_snapshot_local; return 0 ;;
@@ -1964,8 +1976,9 @@ doctor_remote() {
 }
 
 cmd_doctor() {
-  local h
+  local h every=0
   if [ "${1:-}" = "--local" ]; then doctor_local; exit "$DOCTOR_RC"; fi
+  [ $# -gt 0 ] || every=1
   # shellcheck disable=SC2086  # FLEET_HOSTS is a space-separated list
   [ $# -gt 0 ] || set -- $FLEET_HOSTS
   [ $# -gt 0 ] || set -- "$FLEET_SELF"   # no hosts yet: check this machine, which reports that
@@ -1973,6 +1986,9 @@ cmd_doctor() {
     if [ "$h" = "$FLEET_SELF" ]; then doctor_local; else doctor_remote "$h"; fi
     echo
   done
+  if [ "$every" = 1 ] && [ $# -gt 1 ]; then
+    printf '%sacross hosts%s\n' "$BOLD" "$RESET"; claude_doctor_line; echo
+  fi
   exit "$DOCTOR_RC"
 }
 
