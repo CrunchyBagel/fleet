@@ -137,34 +137,47 @@ extension FleetModel {
         }
     }
 
-    /// `fleet claude --json`. A load already running wins over a new one, so
-    /// an older answer can never land after a newer one.
+    /// `fleet claude --json`. One load at a time, so an older answer never
+    /// lands after a newer one; a load asked for meanwhile (after a copy, ⌘R)
+    /// runs once the current one is done, so the screen never keeps showing
+    /// what was there before an action.
     func loadClaudeSetup() {
-        guard !claudeSetupLoading else { return }
+        guard !claudeSetupLoading else { claudeReloadPending = true; return }
         claudeSetupLoading = true
+        claudeReloadPending = false
         Task {
             do {
                 claudeSetup = try await FleetCLI.claudeSetup()
                 claudeSetupAt = Date(); claudeSetupError = nil
-            } catch { claudeSetupError = error.localizedDescription }
+            } catch { claudeSetupError = Self.reason(error) }
             claudeSetupLoading = false
+            if claudeReloadPending { loadClaudeSetup() }
         }
+    }
+    /// fleet's own last word on a failure (its last stderr line), else the error.
+    static func reason(_ error: Error) -> String {
+        if case let FleetError.failed(_, _, err) = error,
+           let last = err.split(separator: "\n").map({ $0.trimmingCharacters(in: .whitespaces) }).last(where: { !$0.isEmpty }) {
+            return last
+        }
+        return error.localizedDescription
     }
 
     func claudeCopy(_ item: ClaudeItem, from: String, to: [String]) {
-        claudeRun("claude copy") { p in try await FleetCLI.claudeCopy(kind: item.kind, name: item.name, from: from, to: to, progress: p) }
+        claudeRun("claude copy", item) { p in try await FleetCLI.claudeCopy(kind: item.kind, name: item.name, from: from, to: to, progress: p) }
     }
     func claudeRemove(_ item: ClaudeItem, from host: String) {
-        claudeRun("claude rm") { p in try await FleetCLI.claudeRemove(kind: item.kind, name: item.name, host: host, progress: p) }
+        claudeRun("claude rm", item) { p in try await FleetCLI.claudeRemove(kind: item.kind, name: item.name, host: host, progress: p) }
     }
     /// One copy or remove at a time. Its lines stream into the status line;
     /// a failure also goes to the banner, as the FAIL line when there is one,
     /// else fleet's own message (stderr); the matrix reloads either way.
-    private func claudeRun(_ what: String, _ op: @escaping (@escaping @Sendable (String) -> Void) async throws -> Void) {
+    private func claudeRun(_ what: String, _ item: ClaudeItem, _ op: @escaping (@escaping @Sendable (String) -> Void) async throws -> Void) {
         guard !claudeActionRunning else { return }
         actionError = nil
         claudeActionRunning = true
         claudeAction = ""
+        claudeActionItem = item.id
         Task {
             do {
                 try await op { line in
@@ -176,11 +189,7 @@ extension FleetModel {
             } catch {
                 await Task.yield()                          // let the last streamed lines land first
                 let lines = (claudeAction ?? "").split(separator: "\n").map(String.init)
-                var stderrLine: String?
-                if case let FleetError.failed(_, _, err) = error {
-                    stderrLine = err.split(separator: "\n").last.map { $0.trimmingCharacters(in: .whitespaces) }
-                }
-                let why = lines.last { $0.hasPrefix("FAIL") } ?? stderrLine ?? error.localizedDescription
+                let why = lines.last { $0.hasPrefix("FAIL") } ?? Self.reason(error)
                 actionError = "\(what): \(why)"
             }
             claudeActionRunning = false

@@ -183,7 +183,7 @@ struct ClaudeInspector: View {
                     }
                     Divider()
                 }
-                if let out = model.claudeAction, !out.isEmpty || model.claudeActionRunning {
+                if let out = model.claudeAction, model.claudeActionItem == item.id, !out.isEmpty || model.claudeActionRunning {
                     HStack(alignment: .top, spacing: 8) {
                         if model.claudeActionRunning { ProgressView().controlSize(.small) }
                         Text(out.isEmpty ? "Starting…" : out).font(.caption.monospaced()).textSelection(.enabled)
@@ -204,7 +204,10 @@ struct ClaudeInspector: View {
         if let c = item.cell(h) {
             HStack(spacing: 8) {
                 let behind = others.filter { item.cell($0)?.digest != c.digest }
-                if !behind.isEmpty {
+                if behind.count == 1 {
+                    Button("Copy to \(behind[0])") { model.claudeCopy(item, from: h, to: behind) }
+                        .help("Make \(behind[0]) match \(h)")
+                } else if !behind.isEmpty {
                     Menu {
                         ForEach(behind, id: \.self) { o in Button("Copy to \(o) Only") { model.claudeCopy(item, from: h, to: [o]) } }
                     } label: {

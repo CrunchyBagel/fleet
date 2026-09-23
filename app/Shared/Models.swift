@@ -302,18 +302,6 @@ struct ClaudeItem: Decodable, Identifiable {
 
     func cell(_ host: String) -> ClaudeCell? { cells[host] ?? nil }
 
-    /// What the matrix shows for a host, as `fleet claude` prints it.
-    func text(_ host: String) -> String {
-        guard let c = cell(host) else { return "·" }
-        switch kind {
-        case "plugin": return c.summary == "disabled" ? "○" : "●"
-        case "perm": return "●"
-        case "error": return "!"
-        case "setting" where name != "env": return c.summary.isEmpty ? "\"\"" : c.summary
-        default: return String(c.digest.prefix(4))
-        }
-    }
-
     static func title(_ kind: String) -> String {
         switch kind {
         case "marketplace": return "Marketplaces"
@@ -373,9 +361,12 @@ extension ClaudeItem {
             case "plugin":
                 parts.append("Disabled on " + have.filter { cell($0)?.summary == "disabled" }.formatted(.list(type: .and)))
             case "setting" where name != "env":
+                // The CLI clips values to 12 characters: when two differing
+                // values clip alike, say how many there are instead.
                 var seen: [String] = []
                 for h in have { let v = cell(h)!.summary; if !seen.contains(v) { seen.append(v) } }
-                parts.append(seen.joined(separator: " · "))
+                parts.append(seen.count < versions(have).count ? "\(versions(have).count) versions"
+                             : seen.map { $0.isEmpty ? "\"\"" : $0 }.joined(separator: " · "))
             default:
                 parts.append("\(versions(have).count) versions")
             }
@@ -390,6 +381,7 @@ extension ClaudeItem {
             case "setting": return "Not set"
             case "perm": return "Not listed"
             case "file": return "Missing"
+            case "error": return "OK"
             default: return "Not installed"
             }
         }
@@ -399,7 +391,9 @@ extension ClaudeItem {
         case "perm": return "Listed"
         case "error": return "Not valid JSON: fix it by hand"
         case "setting" where name == "env": return ["Set (values hidden)", letter].compactMap { $0 }.joined(separator: " · ")
-        case "setting": return c.summary
+        case "setting":
+            let shown = c.summary.isEmpty ? "\"\"" : c.summary
+            return c.summary.hasSuffix("…") ? [letter, shown].compactMap { $0 }.joined(separator: " · ") : shown
         default:
             let exec = c.exec == true ? "executable" : nil
             var summary: String? = c.summary.isEmpty ? nil : c.summary
