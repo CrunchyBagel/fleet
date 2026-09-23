@@ -459,11 +459,11 @@ spinner() {   # $1 dir
   done
 }
 
-gather_into() {   # <dir> [--managed]
-  local h pids="" spin=""
+gather_into() {   # <dir> [--managed] [fetch-fn]: fetch-fn <host> <dir> <mode> (default host_status)
+  local h pids="" spin="" fn="${3:-host_status}"
   [ -n "${FLEET_HOSTS// /}" ] || die "no hosts yet: fleet hosts add   (see fleet doctor)"
   for h in $FLEET_HOSTS; do
-    host_status "$h" "$1" "${2:-}" & pids="$pids $!"
+    "$fn" "$h" "$1" "${2:-}" & pids="$pids $!"
   done
   if [ -t 2 ] && [ -z "${FLEET_NO_SPINNER:-}" ]; then spinner "$1" & spin=$!; fi
   # shellcheck disable=SC2086  # pids is a space-separated list of job ids
@@ -1123,11 +1123,99 @@ claude_snapshot_local() {
     '($d | split("\n")) as $ds | {version: 1, items: ([$items | to_entries[] | .value + {digest: $ds[.key]} | del(.canon)] + $files)}'
 }
 
+claude_fetch() { host_fetch "$1" "$2" claude_snapshot_local "fleet claude --local" "" '{}'; }
+
+claude_host() {   # <name>: `this` is FLEET_SELF; anything else must be in the host list
+  local h="$1"; [ "$h" = this ] && h="$FLEET_SELF"
+  case " $FLEET_HOSTS " in *" $h "*) [ -n "$h" ] && printf '%s' "$h" && return 0 ;; esac
+  die "unknown host '$1'. hosts:$(hosts_line)"
+}
+
+# claude_matrix <dir>: the gathered snapshots (<host>.json, <host>.down) as the
+# `fleet claude --json` object. Hosts that did not answer get no column.
+claude_matrix() {
+  local h up="" down
+  for h in $FLEET_HOSTS; do [ -e "$1/$h.down" ] || up="$up $h"; done
+  down=$(for h in $FLEET_HOSTS; do
+      if [ -e "$1/$h.down" ]; then jq -nc --arg h "$h" --arg r "$(cat "$1/$h.down")" '{($h): $r}'; fi
+    done | jq -sc 'add // {}')
+  for h in $up; do jq -c --arg h "$h" '{host: $h, items: (.items // [])}' "$1/$h.json"; done \
+    | jq -sc --argjson down "$down" --arg order "$CLAUDE_KINDS error" '
+        ($order | split(" ")) as $order
+        | map(.host) as $hosts
+        | [ map(.host as $h | .items[] | . + {host: $h}) | group_by([.kind, .name])[]
+            | {kind: .[0].kind, name: .[0].name,
+               cells: (reduce .[] as $c ({}; .[$c.host] = ($c | {digest, summary}
+                        + (if .value != null then {value} else {} end)
+                        + (if .exec != null then {exec} else {} end))))}
+            | .cells as $c | .cells = (reduce $hosts[] as $h ({}; .[$h] = ($c[$h] // null)))
+            | .differs = ([.cells[] | if . == null then null else .digest end] | unique | length > 1) ]
+        | sort_by(.kind as $k | [($order | index([$k])), .name]) as $items
+        | {hosts: $hosts, down: $down, items: $items}'
+}
+
+# claude_table <json>: the matrix for a person. Cells: ● present (plugin
+# enabled), ○ plugin disabled, · absent, a setting's value, else the first 4
+# of the digest (so equal values look equal). Padding by characters (pad).
+claude_table() {
+  local tsv i h
+  local -a w r
+  tsv=$(printf '%s' "$1" | jq -r '
+    def clip($n): if length > $n then .[0:$n - 1] + "…" else . end;
+    def cell($k; $n): if . == null then "·"
+      elif $k == "plugin" then (if .summary == "disabled" then "○" else "●" end)
+      elif $k == "perm" then "●"
+      elif $k == "error" then "!"
+      elif $k == "setting" and $n != "env" then (.summary | if . == "" then "\"\"" else . end)
+      else .digest[0:4] end;
+    .hosts as $hosts
+    | [.items[] | . as $i | [.kind, (.name | clip(40))] + [$hosts[] as $h | $i.cells[$h] | cell($i.kind; $i.name)]] as $rows
+    | ([[$rows[] | .[1] | length] | max // 4, 4] | max | tostring) as $nw
+    | ([$nw] + [range(0; $hosts | length) as $j | [$hosts[$j], ($rows[] | .[$j + 2])] | map(length) | max | tostring] | @tsv),
+      ($rows[] | @tsv)')
+  if [ "$(printf '%s' "$1" | jq '.items | length')" -eq 0 ]; then
+    printf 'nothing to show on%s\n' "$(printf '%s' "$1" | jq -r '.hosts | map(" " + .) | join("")')"
+    return 0
+  fi
+  {
+    IFS=$'\t' read -r -a w
+    pad '' 11; printf '  '; pad '' "${w[0]}"
+    i=1; for h in $(printf '%s' "$1" | jq -r '.hosts[]'); do printf '  %s' "$BOLD"; pad "$h" "${w[$i]}"; printf '%s' "$RESET"; i=$((i + 1)); done
+    echo
+    while IFS=$'\t' read -r -a r; do
+      pad "${r[0]}" 11; printf '  '; pad "${r[1]}" "${w[0]}"
+      i=2; while [ "$i" -lt "${#r[@]}" ]; do printf '  '; pad "${r[$i]}" "${w[$((i - 1))]}"; i=$((i + 1)); done
+      echo
+    done
+  } <<< "$tsv"
+}
+
+claude_matrix_cmd() {   # [--json] [--diff] [host...]
+  local a h asjson=0 diff=0 hosts="" tmp json
+  for a in "$@"; do
+    case "$a" in
+      --json) asjson=1 ;;
+      --diff) diff=1 ;;
+      -*) die "usage: fleet claude [--json] [--diff] [host...]" ;;
+      *) h=$(claude_host "$a") || exit 1; hosts="$hosts $h" ;;
+    esac
+  done
+  [ -z "$hosts" ] || FLEET_HOSTS="${hosts# }"
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  gather_into "$tmp" "" claude_fetch
+  json=$(claude_matrix "$tmp")
+  [ "$diff" = 0 ] || json=$(printf '%s' "$json" | jq -c '.items |= map(select(.differs))')
+  if [ "$asjson" = 1 ]; then printf '%s\n' "$json"; return 0; fi
+  claude_table "$json"
+  if [ -n "$(down_hosts "$tmp")" ]; then printf '%snot answering:\n%s%s\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"; fi
+}
+
 cmd_claude() {
   case "${1:-}" in
     --local) claude_snapshot_local; return 0 ;;
   esac
-  die "usage: fleet claude [--json] [--diff] [host...]"
+  claude_matrix_cmd "$@"
 }
 
 # ---------------------------------------------------------------- new
@@ -2292,6 +2380,9 @@ fleet - Claude Code agent worktrees across your Macs
                                   it; a name adds a session there, or a worktree once converted;
                                   --model: which Claude model (default: Claude Code's own choice)
   fleet models [host] [--json]    the models Claude Code there can start with, and its default
+  fleet claude [--json] [--diff] [host...]
+                                  how the Claude Code setup (plugins, MCP servers, settings,
+                                  permission rules, CLAUDE.md, scripts) differs across the Macs
   fleet projects [host] [--all] [--json]
                                   repos under FLEET_ROOT there, Claude-used first
                                   (--all: also folders that are not repos yet)

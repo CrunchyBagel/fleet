@@ -562,5 +562,24 @@ mkdir -p "$T/badhome/.claude"; echo 'not json {' > "$T/badhome/.claude/settings.
 assert_eq "a settings.json that is not JSON is an error row" \
   "$(renv HOME="$T/badhome" -- claude --local | jq -c '[.items[] | [.kind, .name, .summary]]')" '[["error",".claude/settings.json","not JSON"]]'
 
+M=$(renv FLEET_HOSTS="laptop studio" -- claude --json)
+assert_eq "claude --json names the Macs that answered" "$(printf '%s' "$M" | jq -c .hosts)" '["laptop","studio"]'
+assert_eq "  ...rows in kind order, marketplace first" "$(printf '%s' "$M" | jq -r '.items[0].kind')" "marketplace"
+assert_eq "  ...the same mcp entry does not differ"    "$(printf '%s' "$M" | jq -r '.items[] | select(.kind=="mcp" and .name=="sentry") | .differs')" "false"
+assert_eq "  ...a setting that differs"                "$(printf '%s' "$M" | jq -c '.items[] | select(.name=="effortLevel") | [.differs, .cells.laptop.summary, .cells.studio.summary]')" '[true,"high","medium"]'
+assert_eq "  ...absent is null"                        "$(printf '%s' "$M" | jq -c '.items[] | select(.name=="xcode") | .cells.laptop')" "null"
+assert_lacks "  ...no secrets in the matrix"           "$M" "sekrit"
+assert_eq "claude --diff drops the rows that agree"    "$(renv FLEET_HOSTS="laptop studio" -- claude --json --diff | jq -r '[.items[] | select(.name=="sentry" or .name=="swift-lsp@official")] | length')" "0"
+TB=$(renv FLEET_HOSTS="laptop studio" -- claude)
+assert_contains "the table has a column per Mac"       "$(printf '%s' "$TB" | head -1)" "laptop"
+assert_contains "  ...and shows both values of a setting" "$(printf '%s' "$TB" | grep effortLevel)" "high"
+assert_contains "  ...(studio's too)"                  "$(printf '%s' "$TB" | grep effortLevel)" "medium"
+assert_contains "  ...a disabled plugin is an open dot" "$(printf '%s' "$TB" | grep 'off@official')" "○"
+assert_lacks "  ...no secrets in the table"            "$TB" "sekrit"
+assert_contains "a dead host is reported under the table" "$(renv FLEET_HOSTS="laptop studio dead" -- claude 2>&1)" "dead: ssh failed"
+assert_lacks "  ...and gets no column"                 "$(renv FLEET_HOSTS="laptop studio dead" -- claude 2>&1 | head -1)" "dead"
+assert_lacks "claude <host> asks that host only"       "$(renv FLEET_HOSTS="laptop studio" -- claude studio | head -1)" "laptop"
+assert_contains "claude rejects an unknown host"       "$(renv FLEET_HOSTS="laptop studio" -- claude nosuch 2>&1)" "unknown host"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
