@@ -352,11 +352,15 @@ whoever runs it.
   a `vnc://` URL in Screen Sharing.app (`ScreenSharing.swift`,
   `FleetModel.screenShare`): the host's `lan_name` and `lan_ip` from `hosts
   info` are probed on port 5900 (1.5s, `.local` only resolves on the same
-  link) and whichever answers is the address, else the tailnet name; the
-  query `?quality=high|adaptive&numVirtualDisplays=0` is Screen Sharing's
-  own .vncloc URL format and presets High Performance (only when the LAN
-  answered and both Macs report `lan_link` ethernet and an Apple chip) or
-  Standard, so its mode chooser does not come up. The Claude and GitHub buttons draw
+  link; needs Local Network access, `NSLocalNetworkUsageDescription`,
+  denied = "Local network prohibited" = tailnet name) and whichever answers is the address (the IP first: a `.local`
+  name costs mDNS and Kerberos timeouts on link-local IPv6), else the
+  tailnet name; the query is Screen Sharing's own .vncloc URL format and
+  presets High Performance, `?quality=high` (only when the LAN answered
+  and both Macs report `lan_link` ethernet and an Apple chip; adding
+  `numVirtualDisplays=0` to it silently gives Standard), else Standard,
+  `?quality=full&numVirtualDisplays=0` (View > Full Quality) on the LAN and
+  `quality=adaptive` over the tailnet, so its mode chooser does not come up. The Claude and GitHub buttons draw
   the real marks: SVG path data from Simple Icons (CC0) in `Brand`, drawn
   by `SVGShape` (lines and cubics only, no assets). Action buttons are icon over caption
   with a shared minimum width (`FilledStyle`) so the row never wraps; there

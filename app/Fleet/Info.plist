@@ -28,6 +28,8 @@
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Fleet checks whether a Mac answers Screen Sharing on your local network, so it can connect there directly instead of over Tailscale.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

@@ -46,6 +46,10 @@ targets:
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.developer-tools
         CFBundleIconName: AppIcon
+        # Screen Sharing probes the LAN IP/name on port 5900. Without Local
+        # Network access macOS refuses that ("Local network prohibited") and
+        # the tailnet name is used; this string is what its prompt shows.
+        NSLocalNetworkUsageDescription: Fleet checks whether a Mac answers Screen Sharing on your local network, so it can connect there directly instead of over Tailscale.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.crunchybagel.fleet
