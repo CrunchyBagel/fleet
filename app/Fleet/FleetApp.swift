@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             c.delegate = self
             c.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         }
+        ScreenSharing.requestLocalNetworkAccess()   // the Local Network prompt now, not on the first click
     }
     /// With the menu bar item on, closing the window leaves fleet watching.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !Prefs.on(Prefs.menuBar) }

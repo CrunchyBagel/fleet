@@ -359,12 +359,18 @@ whoever runs it.
   `FleetModel.screenShare`): the host's `lan_name` and `lan_ip` from `hosts
   info` are probed on port 5900 (1.5s, `.local` only resolves on the same
   link; needs Local Network access, `NSLocalNetworkUsageDescription`,
-  denied = "Local network prohibited" = tailnet name) and whichever answers is the address (the IP first: a `.local`
+  denied = "Local network prohibited" = tailnet name; the app delegate
+  asks for it at launch with a throwaway TCP connect to a link-local
+  address, `ScreenSharing.requestLocalNetworkAccess` (a Bonjour browse
+  does not go through the check), because
+  the first probe fails instantly while the prompt, or the re-check a
+  rebuilt binary's new UUID triggers, is pending) and whichever answers is the address (the IP first: a `.local`
   name costs mDNS and Kerberos timeouts on link-local IPv6), else the
   tailnet name; the query is Screen Sharing's own .vncloc URL format and
-  presets High Performance, `?quality=high` (only when the LAN answered
-  and both Macs report `lan_link` ethernet and an Apple chip; adding
-  `numVirtualDisplays=0` to it silently gives Standard), else Standard,
+  presets High Performance, `?quality=high&numVirtualDisplays=1` (only
+  when the LAN answered and both Macs report `lan_link` ethernet and an
+  Apple chip; a count of 0, or no count at all, silently gives Standard:
+  Screen Sharing's log says "pro mode with no virtual displays"), else Standard,
   `?quality=full&numVirtualDisplays=0` (View > Full Quality) on the LAN and
   `quality=adaptive` over the tailnet, so its mode chooser does not come up. The Claude and GitHub buttons draw
   the real marks: SVG path data from Simple Icons (CC0) in `Brand`, drawn
