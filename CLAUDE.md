@@ -135,7 +135,7 @@ whoever runs it.
   unknown. `new ... --model <m>` (anywhere on the line, alias or id) appends
   `--model <m>` to the claude command; without it nothing is passed, so
   Claude Code's own default (including a `[1m]` variant) applies.
-  `claude [--json] [--diff] [host...]` = how the Claude Code setup differs
+  `claude [--json] [--diff] [--kind k,...] [host...]` = how the Claude Code setup differs
   across the Macs, one row per item: `marketplace` (known_marketplaces.json),
   `plugin` (`enabledPlugins`, enabled/disabled), `mcp` (user-scope
   `mcpServers` in `~/.claude.json`), `setting` (settings.json top-level keys
@@ -150,8 +150,12 @@ whoever runs it.
   (`claude get --local`) and pipes it into `claude set --local` on each
   target (claude CLI for plugin/marketplace/mcp, never `-y`; jq with a
   one-time `.fleet-backup` for settings/perm; temp file + mv for files).
-  `claude rm [-y]` runs `claude unset --local`. Fan-out doctor adds one
-  informational "claude setup differs" line.
+  `claude rm [-y]` runs `claude unset --local`. The table (and `--diff`)
+  hides `perm` rows behind one count line, since rules outnumber everything
+  and matter less; `--kind <k>[,<k>]` shows only those kinds (`--kind perm`
+  for the rules) and also filters `--json`, which otherwise has every row.
+  Fan-out doctor adds one informational "claude setup differs on N item(s)
+  and M permission rule(s)" line.
   `keys add "<openssh line>"` (validated to one `<type> <base64> [comment]`
   line, `valid_pubkey`) appends to `~/.ssh/authorized_keys` here and on every
   reachable host via `keys_script` (umask 077, idempotent); `keys rm

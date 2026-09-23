@@ -1191,15 +1191,28 @@ claude_table() {
   } <<< "$tsv"
 }
 
-claude_matrix_cmd() {   # [--json] [--diff] [host...]
-  local a h asjson=0 diff=0 hosts="" tmp json
-  for a in "$@"; do
-    case "$a" in
+# Permission rules outnumber everything else and matter less, so the table
+# shows them only when asked (--kind perm) and sums them up otherwise.
+# --kind <k>[,<k>...] shows just those kinds; --json keeps every row unless
+# --kind is given.
+claude_matrix_cmd() {   # [--json] [--diff] [--kind <k>[,<k>...]] [host...]
+  local usage="usage: fleet claude [--json] [--diff] [--kind <kind>[,<kind>...]] [host...]"
+  local h k asjson=0 diff=0 kinds="" hosts="" tmp json sum
+  while [ $# -gt 0 ]; do
+    case "$1" in
       --json) asjson=1 ;;
       --diff) diff=1 ;;
-      -*) die "usage: fleet claude [--json] [--diff] [host...]" ;;
-      *) h=$(claude_host "$a") || exit 1; hosts="$hosts $h" ;;
+      --kind)
+        [ -n "${2:-}" ] || die "$usage"
+        for k in $(printf '%s' "$2" | tr ',' ' '); do
+          claude_valid_kind "$k" || die "unknown kind '$k' (kinds: $CLAUDE_KINDS)"
+          kinds="$kinds $k"
+        done
+        shift ;;
+      -*) die "$usage" ;;
+      *) h=$(claude_host "$1") || exit 1; hosts="$hosts $h" ;;
     esac
+    shift
   done
   [ -z "$hosts" ] || FLEET_HOSTS="${hosts# }"
   tmp=$(mktemp -d)
@@ -1207,8 +1220,19 @@ claude_matrix_cmd() {   # [--json] [--diff] [host...]
   gather_into "$tmp" "" claude_fetch
   json=$(claude_matrix "$tmp")
   [ "$diff" = 0 ] || json=$(printf '%s' "$json" | jq -c '.items |= map(select(.differs))')
+  if [ -n "$kinds" ]; then
+    json=$(printf '%s' "$json" | jq -c --arg k "$kinds" '($k | split(" ")) as $k | .items |= map(select(.kind as $x | $k | index([$x])))')
+  fi
   if [ "$asjson" = 1 ]; then printf '%s\n' "$json"; return 0; fi
-  claude_table "$json"
+  if [ -n "$kinds" ]; then claude_table "$json"
+  else
+    claude_table "$(printf '%s' "$json" | jq -c '.items |= map(select(.kind != "perm"))')"
+    sum=$(printf '%s' "$json" | jq -r '[.items[] | select(.kind == "perm")] | [(map(select(.differs)) | length), (map(select(.differs | not)) | length)]
+      | if .[0] + .[1] == 0 then empty elif .[1] == 0 then "\(.[0]) rules differ" else "\(.[0]) rules differ, \(.[1]) the same" end')
+    if [ -n "$sum" ]; then
+      pad perm 11; printf '  %s%s (fleet claude%s --kind perm)%s\n' "$DIM" "$sum" "$([ "$diff" = 1 ] && printf ' --diff')" "$RESET"
+    fi
+  fi
   if [ -n "$(down_hosts "$tmp")" ]; then printf '%snot answering:\n%s%s\n' "$YELLOW" "$(down_reasons "$tmp")" "$RESET"; fi
 }
 
@@ -1474,13 +1498,13 @@ claude_rm() {   # [-y] <kind> <name> <host...>|all
 # For `fleet doctor` across every host: one line, informational (a Mac may
 # differ on purpose), never FAIL.
 claude_doctor_line() {
-  local tmp n
+  local tmp n p
   tmp=$(mktemp -d)
   trap 'rm -rf "${tmp:-}"' RETURN
   gather_into "$tmp" "" claude_fetch
-  n=$(claude_matrix "$tmp" | jq '[.items[] | select(.differs)] | length')
-  if [ "$n" -eq 0 ]; then ok "claude setup is the same on every Mac that answered"
-  else printf '%s  · claude setup differs on %s item(s) (fleet claude --diff)%s\n' "$DIM" "$n" "$RESET"; fi
+  read -r n p <<< "$(claude_matrix "$tmp" | jq -r '[.items[] | select(.differs)] | "\(map(select(.kind != "perm")) | length) \(map(select(.kind == "perm")) | length)"')"
+  if [ "$n" -eq 0 ] && [ "$p" -eq 0 ]; then ok "claude setup is the same on every Mac that answered"
+  else printf '%s  · claude setup differs on %s item(s) and %s permission rule(s) (fleet claude --diff)%s\n' "$DIM" "$n" "$p" "$RESET"; fi
 }
 
 cmd_claude() {
@@ -2663,7 +2687,7 @@ fleet - Claude Code agent worktrees across your Macs
                                   it; a name adds a session there, or a worktree once converted;
                                   --model: which Claude model (default: Claude Code's own choice)
   fleet models [host] [--json]    the models Claude Code there can start with, and its default
-  fleet claude [--json] [--diff] [host...]
+  fleet claude [--json] [--diff] [--kind <kind>[,<kind>...]] [host...]
                                   how the Claude Code setup (plugins, MCP servers, settings,
                                   permission rules, CLAUDE.md, scripts) differs across the Macs
   fleet claude copy <kind> <name> --from <host> --to <host...>|all

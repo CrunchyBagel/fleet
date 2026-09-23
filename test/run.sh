@@ -727,5 +727,19 @@ assert_contains "names starting with - are refused"   "$(run claude unset --loca
 assert_lacks "  ...and never reach claude"             "$(cat "$SHIM_LOG")" "uninstall"
 assert_contains "  ...in copy too"                     "$(renv "${H2[@]}" -- claude copy plugin --yes --from this --to studio 2>&1)" "cannot start with -"
 
+# Permission rules are many and matter less: hidden unless asked for.
+TB=$(renv "${H2[@]}" -- claude)
+assert_lacks "the table hides permission rules"        "$TB" "allow:"
+assert_contains "  ...summing them up in one line"     "$TB" "2 rules differ, 1 the same (fleet claude --kind perm)"
+assert_contains "--diff sums up the rules that differ" "$(renv "${H2[@]}" -- claude --diff)" "2 rules differ (fleet claude --diff --kind perm)"
+TK=$(renv "${H2[@]}" -- claude --kind perm)
+assert_contains "--kind perm shows the rules"          "$TK" "allow:Bash(ls:*)"
+assert_lacks "  ...and nothing else"                   "$TK" "plugin"
+assert_eq "--kind takes a list and filters --json too" "$(renv "${H2[@]}" -- claude --json --kind plugin,mcp | jq -r '[.items[].kind] | unique | join(",")')" "mcp,plugin"
+assert_eq "--json alone still carries the rules"      "$(renv "${H2[@]}" -- claude --json | jq '[.items[] | select(.kind=="perm")] | length')" "3"
+assert_contains "--kind rejects an unknown kind"       "$(renv "${H2[@]}" -- claude --kind skill 2>&1)" "unknown kind"
+assert_contains "--kind needs a value"                 "$(renv "${H2[@]}" -- claude --kind 2>&1)" "usage: fleet claude"
+assert_contains "doctor counts rules apart"            "$(renv "${H2[@]}" -- doctor 2>&1)" "and 2 permission rule(s) (fleet claude --diff)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
