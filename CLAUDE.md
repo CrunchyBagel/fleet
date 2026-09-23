@@ -352,6 +352,22 @@ whoever runs it.
   shows a Claude usage box (`UsageView`, from `FleetModel.usage`, the
   freshest snapshot with limits) and the menu bar menu repeats the numbers;
   notifications carry the note in their body.
+- Claude Setup (sidebar item under Overview, `Item.claudeSetup`,
+  `FLEET_SELECT=claude-setup`): `fleet claude --json` as a native `List`
+  grouped by kind, each row saying in words what differs
+  (`ClaudeItem.status`: "Only on studio", "Missing on mini", "medium ·
+  high", "2 versions"; version letters, never digests), with an
+  `.inspector` showing the selected item on each Mac that answered
+  (`ClaudeItem.detail`) and visible buttons: Copy to Others (split button,
+  only to Macs that lack it or differ; never `--to all`, which would
+  include down Macs), Remove… (confirmed), Get from. A first version drew
+  the CLI's matrix (dots, digests, cell menus); the owner found it ugly and
+  un-Mac-like, so do not go back to that. Badge = differing items without
+  permission rules, which sit in a collapsed section. Not polled: loaded
+  after the first load, when shown, on ⌘R/toolbar Refresh (`refreshNow`)
+  and after each action. `fleet claude copy|rm -y` run one at a time,
+  output streamed into the inspector; failures go to the banner (the FAIL
+  line, else fleet's stderr). `ClaudeCell` never decodes `value`.
 - Machine screen: Shell (`fleet shell <host>` with FLEET_TERM), Screen
   Sharing, New session, and a Doctor section that runs `fleet doctor <host>`;
   a session's terminal button (named after the chosen app) is a menu:
@@ -367,6 +383,7 @@ whoever runs it.
 - Files in `app/Fleet/`, one screen or concern each: `FleetApp.swift` (entry,
   delegate, menu bar), `ContentView.swift` (window, sidebar rows and menus),
   `OverviewViews.swift`, `HostView.swift` (with the Doctor section),
+  `ClaudeSetupView.swift` (the Claude Setup screen),
   `SessionView.swift` (with the New-session sheet), `SettingsViews.swift`,
   `Controls.swift` (buttons, styles, brand marks), `ScreenSharing.swift`
   (address and mode for the vnc:// URL), `Model.swift` (state,

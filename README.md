@@ -219,8 +219,10 @@ its sessions and what they are doing; a session's buttons attach, open a
 shell, pull into Xcode, open Claude or GitHub, screen share, or end it; a
 machine's screen runs doctor, updates fleet, and starts sessions. It
 notifies you when an agent needs you, keeps a count in the menu bar and
-Dock, and shows your usage limits. Settings cover the terminal app, polling,
-which buttons to show, and the host list.
+Dock, and shows your usage limits. Its Claude Setup screen lists what differs
+between your Macs' Claude Code setups (plugins, MCP servers, settings,
+CLAUDE.md) and copies or removes an item with one button. Settings cover the
+terminal app, polling, which buttons to show, and the host list.
 
 <img src="docs/mac-session.png" alt="A session in the Mac app: what you asked, what the agent needs, its branch and context use" width="800">
 
