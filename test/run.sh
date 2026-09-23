@@ -360,6 +360,12 @@ O=$(run doctor --local 2>&1); RC=$?
 assert_eq "doctor --local exits non-zero with failures" "$RC" "1"
 assert_contains "doctor reports missing hooks with a fix" "$O" "fix: fleet install   (merges them in"
 assert_contains "doctor names the host first"           "$(printf '%s' "$O" | head -1)" "laptop"
+# The project count is every layout (plain clones included), not only <project>/main.
+NP=$(run projects --local | awk -F '\t' '$2 != "dir"' | wc -l | tr -d ' ')
+assert_contains "doctor counts projects of every layout"    "$O" "ok    $NP project(s) under FLEET_ROOT"
+mkdir -p "$T/home/src/one/.git" "$T/home/src/two/.git" "$T/home/misc/three/.git"     # where this "Mac" keeps clones
+assert_contains "doctor: no FLEET_ROOT points at the config and the folder with the clones" "$(renv FLEET_ROOT="$T/nowhere" -- doctor --local 2>&1)" \
+  "to the folder holding your clones (on this Mac that looks like $T/home/src), or mkdir -p '$T/nowhere'"
 # ~/bin on PATH is judged on the caller's PATH. Over ssh, with_path prepends
 # $HOME/bin before fleet starts, so it sends the PATH it found as
 # FLEET_ORIG_PATH; without that, remote install never wrote ~/.zprofile.

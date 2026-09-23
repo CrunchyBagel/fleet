@@ -26,7 +26,7 @@ FLEET_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/config"
 # shellcheck disable=SC1090
 [ -f "$FLEET_CONFIG" ] && . "$FLEET_CONFIG"
 
-: "${FLEET_ROOT:=$HOME/code}"
+: "${FLEET_ROOT:=$HOME/Developer}"
 : "${FLEET_STATE:=$HOME/.local/state/fleet}"
 : "${FLEET_BRANCH_PREFIX:=agent/}"
 : "${FLEET_SIM:=iPhone 17 Pro}"
@@ -960,6 +960,21 @@ projects_local() {
   done | sort -t "$(printf '\t')" -k1,1n -k2,2f | cut -f2-
 }
 
+# guess_root: the folder one level under $HOME holding the most git clones
+# (Developer, code, src, whatever the owner uses), or nothing when there is
+# none. Nothing is hardcoded to a name: install seeds FLEET_ROOT with it and
+# doctor names it when FLEET_ROOT is missing or empty.
+guess_root() {
+  local d r n best="" max=0
+  for d in "$HOME"/*/; do
+    d=${d%/}
+    case "$d" in "$HOME/Library"|"$HOME/Applications"|"$HOME/Desktop"|"$HOME/Downloads") continue ;; esac
+    n=0; for r in "$d"/*/.git; do [ -e "$r" ] && n=$((n+1)); done
+    if [ "$n" -gt "$max" ]; then max=$n; best=$d; fi
+  done
+  printf '%s' "$best"    # always exit 0: callers run under set -e
+}
+
 # run_on <host> <command>: run a fleet command line here or over ssh.
 run_on() {
   if [ "$1" = "$FLEET_SELF" ]; then
@@ -1447,12 +1462,19 @@ doctor_local() {
   check "claude on PATH" \
         "install Claude Code (curl -fsSL https://claude.ai/install.sh | bash) or add its dir to FLEET_PATH" \
         command -v claude
+  # FLEET_ROOT is where this Mac's clones live. A config written before the
+  # clones existed carries the guess of that day, and fleet update never
+  # rewrites a config, so both hints lead there and name today's guess.
+  t=$(guess_root); t=${t:+ (on this Mac that looks like $t)}
   check "FLEET_ROOT $FLEET_ROOT exists" \
-        "mkdir -p '$FLEET_ROOT', or set FLEET_ROOT in $FLEET_CONFIG" \
+        "set FLEET_ROOT in $FLEET_CONFIG to the folder holding your clones$t, or mkdir -p '$FLEET_ROOT'" \
         test -d "$FLEET_ROOT"
-  n=0; for f in "$FLEET_ROOT"/*/main; do [ -e "$f/.git" ] && n=$((n+1)); done
-  check "$n project(s) with a main clone under FLEET_ROOT" \
-        "git clone <repo> '$FLEET_ROOT/<project>/main' for each project (README section 3)" \
+  n=0; for f in "$FLEET_ROOT"/*/; do
+    [ -d "$f" ] || continue
+    case "$(project_layout "$(basename "$f")")" in dir) ;; *) n=$((n+1)) ;; esac
+  done
+  check "$n project(s) under FLEET_ROOT (plain, worktrees or container layout)" \
+        "set FLEET_ROOT in $FLEET_CONFIG to the folder holding your clones$t, or git clone <repo> '$FLEET_ROOT/<project>' (README: Repo layout)" \
         test "$n" -gt 0
   if [ -d "$FLEET_STATE" ]; then
     check "FLEET_STATE $FLEET_STATE writable" "chmod u+w '$FLEET_STATE'" test -w "$FLEET_STATE"
@@ -1807,6 +1829,7 @@ cmd_keys() {
 # is pushed first. Config and hosts stay in ~/.config/fleet, never in git.
 
 write_example_config() {   # $1 path
+  local root
   {
     cat <<'EOF'
 # fleet per-machine settings. The host list is NOT here: it is the `hosts`
@@ -1816,8 +1839,11 @@ write_example_config() {   # $1 path
 EOF
     printf 'FLEET_SELF="%s"%s\n' "$FLEET_SELF" \
       "                     # this Mac's tailnet name (what others ssh to); detected at install"
+    # The folder under $HOME with the most clones today, else $HOME/Developer.
+    root=$(guess_root); root=${root:-$HOME/Developer}
+    # shellcheck disable=SC2016  # $HOME is meant literally: the config expands it
+    printf 'FLEET_ROOT="$HOME/%s"   # your clones live here, one folder per project (guessed at install)\n' "${root#"$HOME"/}"
     cat <<'EOF'
-FLEET_ROOT="$HOME/code"                 # your clones live here, one folder per project
 # FLEET_OPEN=auto                       # what `fleet open` opens the checkout in: auto (Xcode when the
 #                                       # checkout has a project, else Finder), xcode, finder, or a
 #                                       # command or app name given the directory: code, cursor, zed...

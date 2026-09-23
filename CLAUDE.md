@@ -56,7 +56,11 @@ whoever runs it.
   with MagicDNS no ssh config is needed.
 - Per-machine config `~/.config/fleet/config` (sourced bash, wins over env;
   the example is embedded in the script, `write_example_config`):
-  FLEET_SELF (must be in the host list), FLEET_ROOT (`~/code`),
+  FLEET_SELF (must be in the host list), FLEET_ROOT (`~/Developer`; install seeds
+  the config with `guess_root`, the folder one level under `$HOME` with the
+  most `*/.git`, whatever its name, and doctor names that guess when
+  FLEET_ROOT is missing or holds no project; an existing config is never
+  rewritten, so a Mac whose clones live elsewhere needs the line edited),
   FLEET_STATE (`~/.local/state/fleet`), FLEET_BRANCH_PREFIX (`agent/`),
   FLEET_SIM, FLEET_SSH_TIMEOUT (3, connect), FLEET_CMD_TIMEOUT (10, whole remote
   status), FLEET_PATH (literal `$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:
@@ -331,7 +335,9 @@ whoever runs it.
   Claude Code = attach, Open Shell = `fleet shell <host> <path>` (a fresh
   login shell in the session's directory)
   on demand (text parsed by `DoctorLine.parse`: ok/FAIL/fix/· lines, exit 1
-  tolerated) and an Update fleet button streaming `fleet install <host>`.
+  tolerated; the raw text is kept in `doctorText` for the Copy button) and an
+  Update fleet button streaming `fleet install <host>`. The New-session sheet
+  says so when the host lists no project at all (FLEET_ROOT wrong there).
   A session's End button (and menu items) confirm, then `fleet kill -y`.
   Settings > Hosts edits the list through `fleet hosts add|rm` (add with no
   name = every Mac on the tailnet) and shows the CLI's push results.

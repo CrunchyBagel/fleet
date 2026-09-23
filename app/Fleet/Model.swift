@@ -53,6 +53,7 @@ final class FleetModel: ObservableObject {
     @Published var busy: [String: String] = [:]      // session id -> what fleet is doing for it right now
     @Published var hostBusy: [String: String] = [:]  // host -> what fleet is doing there (install)
     @Published var doctor: [String: [DoctorLine]] = [:]   // host -> last doctor report
+    @Published var doctorText: [String: String] = [:]     // the same, as fleet printed it (Copy)
     @Published var doctorRunning: Set<String> = []
     @Published var refreshing = false
     @Published var lastRefresh: Date?

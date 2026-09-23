@@ -80,6 +80,10 @@ struct DoctorSection: View {
                 Spacer()
                 if running { ProgressView().controlSize(.small) }
                 Button(report == nil ? "Run doctor" : "Run again") { model.runDoctor(on: host) }.disabled(running)
+                if let text = model.doctorText[host] {
+                    Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+                        .help("Copy the whole doctor report as fleet printed it")
+                }
                 Button("Update Fleet") { model.updateFleet(on: host) }
                     .disabled(model.hostBusy[host] != nil || model.downReason(for: host) != nil)
                     .help("fleet update \(host): pull Fleet there, push the host list, seed what is missing")

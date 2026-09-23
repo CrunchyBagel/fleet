@@ -90,7 +90,11 @@ extension FleetModel {
         guard !doctorRunning.contains(host) else { return }
         doctorRunning.insert(host)
         Task {
-            do { doctor[host] = try await FleetCLI.doctor(host: host) }
+            do {
+                let out = try await FleetCLI.doctor(host: host)
+                doctorText[host] = out
+                doctor[host] = DoctorLine.parse(out)
+            }
             catch { actionError = "doctor \(host): \(error.localizedDescription)" }
             doctorRunning.remove(host)
         }

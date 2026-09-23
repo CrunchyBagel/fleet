@@ -202,8 +202,8 @@ struct FleetCLI {
         try await runStreaming(["kill", "-y", host, session], onLine: progress)
     }
     /// `fleet doctor <host>`: the text report, exit 1 meaning "has FAILs".
-    static func doctor(host: String) async throws -> [DoctorLine] {
-        DoctorLine.parse(try await run(["doctor", host], tolerate: true))
+    static func doctor(host: String) async throws -> String {
+        try await run(["doctor", host], tolerate: true)
     }
     static func install(host: String, progress: @escaping @Sendable (String) -> Void) async throws {
         try await runStreaming(["install", host], onLine: progress)

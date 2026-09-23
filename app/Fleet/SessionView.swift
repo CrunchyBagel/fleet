@@ -263,7 +263,11 @@ struct NewSessionSheet: View {
             }
             .overlay {
                 if loading { ProgressView("Listing projects on \(host)…").controlSize(.small) }
-                else if shown.isEmpty { Text("No project matches").foregroundStyle(.secondary) }
+                else if (model.projects[host] ?? []).isEmpty {
+                    // Nothing at all: FLEET_ROOT there is empty or wrong (the example config's ~/code).
+                    Text("No projects under FLEET_ROOT on \(host).\nSet FLEET_ROOT in its ~/.config/fleet/config; Doctor on the machine screen shows the path.")
+                        .multilineTextAlignment(.center).foregroundStyle(.secondary).padding()
+                } else if shown.isEmpty { Text("No project matches").foregroundStyle(.secondary) }
             }
             // Which model the session starts with: the host's Claude Code
             // catalog (fleet models), with its own default as the first row.

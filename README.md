@@ -92,7 +92,8 @@ names a host whose copy differs.
 
 ```bash
 FLEET_SELF="laptop"          # this Mac's tailnet name, detected at install
-FLEET_ROOT="$HOME/code"      # where your clones live
+FLEET_ROOT="$HOME/Developer" # where your clones live: install guesses the folder under
+                             # $HOME with the most clones; doctor names it when this is wrong
 # FLEET_OPEN=auto            # what `fleet open` opens the checkout in (below)
 # FLEET_PATH, FLEET_TERM, FLEET_CLAUDE_ARGS, FLEET_SSH_TIMEOUT...: see the file
 ```
