@@ -110,8 +110,8 @@ host in FLEET_HOSTS apart from `--from`.
 
 Fans out with `gather`/`host_fetch` like `ls` (remote command
 `fleet claude --local`, empty fallback `{}`), so an offline, slow or old
-host behaves the same as in `ls`: its column shows `?` and the
-"down" reason is printed under the table, as `ls` does.
+host behaves the same as in `ls`: it gets no column, and its "down"
+reason is printed under the table, as `ls` does.
 
 Rows are grouped by kind in the order of the table above, then sorted by
 name. `--diff` (and the doctor hint) shows only rows where the reachable
@@ -178,7 +178,7 @@ which shows as a row so the owner sees it. Needs only jq and shasum, like
 1. Fetch the item's full value from `--from`:
    `fleet claude get --local <kind> <name>` there (prints the raw value, or
    the raw file content for `file`; exit 1 if absent → "not on <host>").
-2. For each target (in parallel, like `hosts_push`): pipe that into
+2. For each target in turn (like `hosts_push`): pipe that into
    `fleet claude set --local <kind> <name>` there, and print
    `<host>: ok` or `<host>: <error>` per target. Exit 1 if any target failed.
 
