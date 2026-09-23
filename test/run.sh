@@ -522,5 +522,45 @@ assert_contains "ls shows what the agent is doing"          "$(renv "FAKE_TMUX_S
 assert_contains "ls shows the account's usage limits"       "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- ls)" "usage: 5-hour 23%  ·  7-day 41%"
 assert_contains "doctor wants the status line wrapped"      "$(run doctor --local 2>&1)" "status line in $T/home/.claude/settings.json does not run fleet statusline"
 
+section "claude setup"
+# Two different Claude setups: laptop ($T/home) and studio ($RH).
+mkdir -p "$T/home/.claude/scripts" "$T/home/.claude/plugins" "$RH/.claude/scripts" "$RH/.claude/plugins"
+cat > "$T/home/.claude/settings.json" <<'EOF'
+{"enabledPlugins": {"superpowers@official": true, "swift-lsp@official": true, "off@official": false, "t@tools": true},
+ "effortLevel": "high", "env": {"API_TOKEN": "sekrit-laptop"},
+ "permissions": {"allow": ["Bash(git log:*)", "Bash(echo 'it''s')"], "defaultMode": "auto"},
+ "hooks": {"Stop": []}, "statusLine": {"type": "command", "command": "x"}, "feedbackSurveyState": {"n": 1}, "tipsCache": 1}
+EOF
+cat > "$RH/.claude/settings.json" <<'EOF'
+{"enabledPlugins": {"swift-lsp@official": true, "only-studio@official": true},
+ "effortLevel": "medium", "permissions": {"allow": ["Bash(ls:*)"]}}
+EOF
+printf '{"official":{"source":{"source":"github","repo":"acme/official"}},"tools":{"source":{"source":"github","repo":"acme/tools"}}}' > "$T/home/.claude/plugins/known_marketplaces.json"
+printf '{"official":{"source":{"source":"github","repo":"acme/official"}}}' > "$RH/.claude/plugins/known_marketplaces.json"
+printf '{"mcpServers":{"sentry":{"type":"http","url":"https://mcp.sentry.dev/mcp"}},"projects":{"/x":{"mcpServers":{"proj":{}}}}}' > "$T/home/.claude.json"
+printf '{"mcpServers":{"sentry":{"type":"http","url":"https://mcp.sentry.dev/mcp"},"xcode":{"type":"stdio","command":"/usr/bin/xcrun","args":["mcpbridge"],"env":{"TOKEN":"sekrit-studio"}}}}' > "$RH/.claude.json"
+echo "# laptop rules" > "$T/home/.claude/CLAUDE.md"; echo "# studio rules" > "$RH/.claude/CLAUDE.md"
+printf 'print("hi")\n' > "$T/home/.claude/scripts/render.py"; chmod 755 "$T/home/.claude/scripts/render.py"
+
+S=$(run claude --local)
+assert_eq "claude --local is a version 1 snapshot"     "$(printf '%s' "$S" | jq -r .version)" "1"
+assert_eq "  ...settings rows skip fleet's own keys, bookkeeping and permissions" \
+  "$(printf '%s' "$S" | jq -r '[.items[] | select(.kind=="setting") | .name] | sort | join(",")')" "effortLevel,env,permissions.defaultMode"
+assert_eq "  ...one perm row per rule"                 "$(printf '%s' "$S" | jq -r '[.items[] | select(.kind=="perm") | .name] | sort | join(",")')" "allow:Bash(echo 'it''s'),allow:Bash(git log:*)"
+assert_eq "  ...a disabled plugin is disabled, not absent" "$(printf '%s' "$S" | jq -r '.items[] | select(.name=="off@official") | .summary')" "disabled"
+assert_eq "  ...marketplaces with their source"        "$(printf '%s' "$S" | jq -r '.items[] | select(.kind=="marketplace" and .name=="tools") | .value.repo')" "acme/tools"
+assert_eq "  ...mcp summary is transport and host"     "$(printf '%s' "$S" | jq -r '.items[] | select(.kind=="mcp") | .summary')" "http mcp.sentry.dev"
+assert_eq "  ...project-scope mcp servers are not rows" "$(printf '%s' "$S" | jq -r '[.items[] | select(.name=="proj")] | length')" "0"
+assert_eq "  ...files: CLAUDE.md and scripts, exec kept" "$(printf '%s' "$S" | jq -r '[.items[] | select(.kind=="file") | "\(.name):\(.exec)"] | join(",")')" "CLAUDE.md:false,scripts/render.py:true"
+assert_lacks "  ...never carries a secret"             "$S" "sekrit"
+assert_eq "  ...every item has a 64-hex digest"        "$(printf '%s' "$S" | jq -r 'all(.items[]; .digest | test("^[0-9a-f]{64}$"))')" "true"
+assert_eq "equal values have equal digests across Macs" \
+  "$(printf '%s' "$S" | jq -r '.items[] | select(.kind=="mcp" and .name=="sentry") | .digest')" \
+  "$(renv HOME="$RH" -- claude --local | jq -r '.items[] | select(.kind=="mcp" and .name=="sentry") | .digest')"
+assert_eq "no ~/.claude at all is an empty snapshot"   "$(renv HOME="$T/emptyhome" -- claude --local)" '{"version":1,"items":[]}'
+mkdir -p "$T/badhome/.claude"; echo 'not json {' > "$T/badhome/.claude/settings.json"
+assert_eq "a settings.json that is not JSON is an error row" \
+  "$(renv HOME="$T/badhome" -- claude --local | jq -c '[.items[] | [.kind, .name, .summary]]')" '[["error",".claude/settings.json","not JSON"]]'
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

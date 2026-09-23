@@ -1044,6 +1044,92 @@ cmd_models() {   # fleet models [host] [--json]: what Claude Code there can star
     | awk -F '\t' -v D="$DIM" -v R="$RESET" 'NR == 1 { print; next } { printf "%s %-28s %-12s %s%s%s\n", $1, $2, $3, D, $4, R }'
 }
 
+# ---------------------------------------------------------------- claude setup
+#
+# `fleet claude`: how the Claude Code setup differs across the Macs, item by
+# item, and `copy`/`rm` to reconcile one item (see
+# docs/superpowers/specs/2026-09-23-claude-setup-alignment-design.md). There
+# is no reference setup: every Mac is a peer and the owner picks per item.
+# Each Mac reports its own snapshot (`claude --local`); mcp entries and the
+# env setting may hold tokens, so they leave a Mac only as a digest, except
+# when `copy` moves one on request. Kinds, in display order:
+#   marketplace  known_marketplaces.json    plugin  enabledPlugins
+#   mcp          ~/.claude.json mcpServers  setting settings.json keys
+#   perm         one permissions rule       file    CLAUDE.md, scripts/*
+
+CLAUDE_KINDS="marketplace plugin mcp setting perm file"
+# settings.json keys that are not compared: fleet's own (install sets them),
+# the ones plugin/marketplace/perm rows cover, and bookkeeping Claude Code
+# writes itself (so is any key ending in State, Cache or Timestamp).
+CLAUDE_SKIP_KEYS="hooks statusLine \$schema enabledPlugins extraKnownMarketplaces permissions feedbackSurveyState"
+
+claude_valid_kind() { [ -n "$1" ] && case " $CLAUDE_KINDS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# claude_src <file>: the file if it holds a JSON object, else /dev/null, so
+# jq --slurpfile never fails on a missing or half-written file.
+claude_src() { if [ -f "$1" ] && jq -e 'type == "object"' "$1" >/dev/null 2>&1; then printf '%s' "$1"; else printf /dev/null; fi; }
+
+# One sha256 per stdin line, in one process (shasum is this same perl module).
+claude_sha() { /usr/bin/perl -MDigest::SHA=sha256_hex -ne 'chomp; print sha256_hex($_), "\n"'; }
+
+# The jq behind the snapshot. canon = sorted-keys JSON text, what the digest is of.
+# shellcheck disable=SC2016  # $s, $u, $m, $skip, $bad are jq variables
+CLAUDE_SNAPSHOT_JQ='
+def canon: walk(if type == "object" then to_entries | sort_by(.key) | from_entries else . end) | tojson;
+def clip($n): if length > $n then .[0:$n - 1] + "…" else . end;
+def shown: if type == "string" then . else tojson end | clip(12);
+($s[0] // {}) as $s | ($u[0] // {}) as $u | ($m[0] // {}) as $m | ($skip | split(" ")) as $skip
+| [ ($m | to_entries[] | {kind: "marketplace", name: .key, value: .value.source,
+        summary: (.value.source | (.repo // .url // .path // .source // "") | tostring)}),
+    ($s.enabledPlugins // {} | to_entries[]
+      | {kind: "plugin", name: .key, value: (if .value == true then "enabled" else "disabled" end)} | .summary = .value),
+    ($u.mcpServers // {} | to_entries[]
+      | {kind: "mcp", name: .key, value: null, secret: .value,
+         summary: ((.value.type // "stdio") + " "
+           + (if .value.url then (.value.url | sub("^[a-z]+://"; "") | sub("/.*$"; ""))
+              else (.value.command // "" | sub("^.*/"; "")) end))}),
+    ($s | to_entries[] | select(.key as $k | ($skip | index([$k]) | not) and ($k | test("(State|Cache|Timestamp)$") | not))
+      | if .key == "env" then {kind: "setting", name: "env", value: null, secret: .value, summary: ""}
+        else {kind: "setting", name: .key, value: .value, summary: (.value | shown)} end),
+    ($s.permissions // {} | to_entries[]
+      | if (.key == "allow" or .key == "deny" or .key == "ask") and (.value | type) == "array"
+        then .key as $l | .value[] | select(type == "string") | {kind: "perm", name: "\($l):\(.)", value: true, summary: ""}
+        else {kind: "setting", name: "permissions.\(.key)", value: .value, summary: (.value | shown)} end),
+    ($bad | split("\n")[] | select(length > 0) | {kind: "error", name: ., value: null, summary: "not JSON"})
+  ]
+| map(.canon = ((if has("secret") then .secret else .value end) | canon) | del(.secret))'
+
+# This Mac's Claude setup as {"version":1,"items":[...]}: the wire format
+# `fleet claude` asks every host for. Needs only jq and perl, like status.
+claude_snapshot_local() {
+  local s="$HOME/.claude/settings.json" u="$HOME/.claude.json" m="$HOME/.claude/plugins/known_marketplaces.json"
+  local f bad="" items digests files='[]' x
+  for f in "$s" "$u" "$m"; do
+    if [ -f "$f" ] && ! jq -e 'type == "object"' "$f" >/dev/null 2>&1; then bad="$bad${f#"$HOME"/}
+"; fi
+  done
+  items=$(jq -nc --slurpfile s "$(claude_src "$s")" --slurpfile u "$(claude_src "$u")" --slurpfile m "$(claude_src "$m")" \
+            --arg skip "$CLAUDE_SKIP_KEYS" --arg bad "$bad" "$CLAUDE_SNAPSHOT_JQ")
+  digests=$(printf '%s' "$items" | jq -r '.[].canon' | claude_sha)
+  for f in "$HOME/.claude/CLAUDE.md" "$HOME/.claude/scripts"/*; do
+    [ -f "$f" ] || continue
+    case "$f" in *.fleet-backup) continue ;; esac   # copy's own backups are not setup
+    if [ -x "$f" ]; then x=true; else x=false; fi
+    files=$(printf '%s' "$files" | jq -c --arg n "${f#"$HOME"/.claude/}" --arg d "$(shasum -a 256 < "$f" | cut -c1-64)" \
+              --argjson size "$(wc -c < "$f" | tr -d ' ')" --argjson x "$x" \
+              '. + [{kind: "file", name: $n, value: null, summary: "\($size) bytes", digest: $d, exec: $x}]')
+  done
+  jq -nc --argjson items "$items" --arg d "$digests" --argjson files "$files" \
+    '($d | split("\n")) as $ds | {version: 1, items: ([$items | to_entries[] | .value + {digest: $ds[.key]} | del(.canon)] + $files)}'
+}
+
+cmd_claude() {
+  case "${1:-}" in
+    --local) claude_snapshot_local; return 0 ;;
+  esac
+  die "usage: fleet claude [--json] [--diff] [host...]"
+}
+
 # ---------------------------------------------------------------- new
 
 # tmux status line for a fleet session: the machine you are on, then the
@@ -2242,6 +2328,7 @@ case "$cmd" in
   new|n)    cmd_new "$@" ;;
   projects|p) cmd_projects "$@" ;;
   models)   cmd_models "$@" ;;
+  claude)   cmd_claude "$@" ;;
   convert)  cmd_convert "$@" ;;
   reap)     cmd_reap ;;
   hosts)    cmd_hosts "$@" ;;
