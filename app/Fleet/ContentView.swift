@@ -149,17 +149,19 @@ struct SessionMenu: View {
         if let cu = session.claudeURL { Button("Open in Claude") { NSWorkspace.shared.open(cu) } }
         if let gh = session.githubURL { Button("GitHub") { NSWorkspace.shared.open(gh) } }
         Button("Copy Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(session.path, forType: .string) }
-        if let mt = model.moveTargets[session.id], session.moveBlocker == nil {
-            Menu("Move To") {
+        Menu("Move To") {
+            if let b = session.moveBlocker {
+                Text("Can't move yet: \(b)")
+            } else if let mt = model.moveTargets[session.id] {
                 ForEach(mt.targets) { t in
                     Button(t.ok ? t.host : "\(t.host): \(t.why)") { model.confirmMove = PendingMove(session: session, target: t.host) }
                         .disabled(!t.ok)
                 }
+            } else {
+                Button("Show Session to Find Macs…") { model.selected = .session(session.id) }   // its screen loads the targets
             }
-        } else {
-            Button("Move To…") { model.selected = .session(session.id) }   // its screen loads the targets
-                .disabled(session.moveBlocker != nil)
         }
+        .disabled(model.busy[session.id] != nil)
         Divider()
         Button("End Session…") { model.confirmEnd = session }
     }

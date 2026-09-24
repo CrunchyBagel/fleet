@@ -83,7 +83,9 @@ struct SessionView: View {
                         .disabled(model.downReason(for: session.host) != nil)
                 }
                 Menu {
-                    if let mt = model.moveTargets[session.id] {
+                    if let b = session.moveBlocker {
+                        Text("Can't move yet: \(b)")
+                    } else if let mt = model.moveTargets[session.id] {
                         ForEach(mt.targets) { t in
                             Button(t.ok ? t.host : "\(t.host): \(t.why)") {
                                 model.confirmMove = PendingMove(session: session, target: t.host)
@@ -103,8 +105,7 @@ struct SessionView: View {
                     }
                 }
                 .menuStyle(.button).buttonStyle(FilledStyle(tint: .teal)).menuIndicator(.hidden)
-                .disabled(session.moveBlocker != nil || model.busy[session.id] != nil
-                          || model.moveTargets[session.id]?.targets.contains(where: \.ok) == false)
+                .disabled(model.busy[session.id] != nil)   // otherwise open, so the menu can say why a move is not possible
                 .help(moveHelp)
                 Spacer()
                 ActionButton(title: "End", system: "xmark.octagon", tint: .red,

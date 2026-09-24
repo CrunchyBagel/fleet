@@ -30,6 +30,7 @@ struct Session: Codable, Identifiable, Hashable {
     let prompt: String?
     let note: String?
     let said: String?
+    let waitingFor: String?     // while blocked: idle_prompt = waiting for your next message, else a real question
     // From the status line snapshot: model, context use, cost, account limits.
     let model: String?
     let contextPct: Int?        // -1 = unknown
@@ -47,6 +48,7 @@ struct Session: Codable, Identifiable, Hashable {
         case attachedFrom = "attached_from"
         case claudeSession = "claude_session"
         case prompt, note, said, model
+        case waitingFor = "waiting_for"
         case contextPct = "context_pct"
         case costUsd = "cost_usd"
         case limit5h = "limit_5h"
@@ -443,7 +445,7 @@ extension Session {
     /// alone; the CLI's move_refusal, same rules in the same order.
     var moveBlocker: String? {
         if state == "running" { return "The agent is working; move it once it is done" }
-        if state == "blocked" { return "The agent is waiting on you; answer it first" }
+        if state == "blocked" && waitingFor != "idle_prompt" { return "The agent is waiting on you; answer it first" }
         if branch == "(detached)" { return "Detached HEAD: there is no branch to move" }
         if dirty { return "Uncommitted changes; commit and push them first" }
         if upstream.isEmpty { return "\(branch) was never pushed" }

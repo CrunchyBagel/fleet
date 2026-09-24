@@ -115,7 +115,7 @@ J=$(run status --json --all)
 assert_eq "status is a JSON array" "$(printf '%s' "$J" | jq -r 'type')" "array"
 assert_eq "record schema" \
   "$(printf '%s' "$J" | jq -r '.[0] | keys | join(",")')" \
-  "activity,ahead,attached_from,behind,branch,claude_session,context_pct,cost_usd,dirty,host,limit_5h,limit_5h_reset,limit_7d,limit_7d_reset,managed,model,name,note,path,project,prompt,remote,said,session,state,stats_ts,subject,ts,upstream,worktree"
+  "activity,ahead,attached_from,behind,branch,claude_session,context_pct,cost_usd,dirty,host,limit_5h,limit_5h_reset,limit_7d,limit_7d_reset,managed,model,name,note,path,project,prompt,remote,said,session,state,stats_ts,subject,ts,upstream,waiting_for,worktree"
 assert_eq "container layout: primary is 'main'"   "$(printf '%s' "$J" | jq -r '.[] | select(.project=="alpha" and (.path|endswith("/alpha/main"))) | .name')" "main"
 assert_eq "feat ahead 1 of its upstream"          "$(printf '%s' "$J" | jq -r '.[] | select(.name=="feat") | "\(.ahead) \(.behind) \(.upstream)"')" "1 0 origin/agent/feat"
 assert_eq "never pushed: upstream empty"          "$(printf '%s' "$J" | jq -r '.[] | select(.name=="nopush") | .upstream')" ""
@@ -503,16 +503,19 @@ assert_eq "  ...but a prompt merely starting with < is kept"          "$(jq -r .
 echo '{"hook_event_name":"UserPromptSubmit","user_input":"fix the music playback bug"}' | renv FAKE_TMUX_SESSION=plain-main -- hook running >/dev/null
 echo '{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}' | renv FAKE_TMUX_SESSION=plain-main -- hook blocked >/dev/null
 assert_eq "Notification keeps its message as the note"    "$(jq -r .note "$T/state/plain-main.json")" "Claude needs your permission to use Bash"
+assert_eq "  ...and its type as what it is waiting for"    "$(jq -r .waiting_for "$T/state/plain-main.json")" "permission_prompt"
 assert_eq "  ...the prompt survives"                       "$(jq -r .prompt "$T/state/plain-main.json")" "fix the music playback bug"
 echo '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' | renv FAKE_TMUX_SESSION=plain-main -- hook blocked >/dev/null
 assert_eq "a Notification without a message names its type" "$(jq -r .note "$T/state/plain-main.json")" "waiting for input"
 echo '{"hook_event_name":"PostToolUse","tool_name":"Bash"}' | renv FAKE_TMUX_SESSION=plain-main -- hook running >/dev/null
 assert_eq "running clears the note"                        "$(jq -r .note "$T/state/plain-main.json")" ""
+assert_eq "  ...and what it was waiting for"               "$(jq -r .waiting_for "$T/state/plain-main.json")" ""
 echo '{"hook_event_name":"Stop","last_assistant_message":"**All done.**\n\nTests pass (`swift test`)."}' | renv FAKE_TMUX_SESSION=plain-main -- hook done >/dev/null
 assert_eq "Stop keeps what the agent said, as plain text"  "$(jq -r .said "$T/state/plain-main.json")" "All done. Tests pass (swift test)."
 echo '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}' | renv FAKE_TMUX_SESSION=plain-main -- hook blocked >/dev/null
 assert_eq "idle after done: the note is what it last said, not the generic message" "$(jq -r .note "$T/state/plain-main.json")" "All done. Tests pass (swift test)."
 assert_eq "  ...and said survives blocked"                 "$(jq -r .said "$T/state/plain-main.json")" "All done. Tests pass (swift test)."
+assert_eq "status carries what a blocked agent waits for" "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- status --json | jq -r '.[] | select(.session=="plain-main") | .waiting_for')" "idle_prompt"
 printf '{"state":"running","ts":1,"prompt":"<task-notification> <task-id>x</task-id>"}' > "$T/state/plain-main.json"
 assert_eq "status drops a tag prompt recorded before the filter" "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- status --json | jq -r '.[] | select(.session=="plain-main") | .prompt')" ""
 echo '{"hook_event_name":"Stop","last_assistant_message":"**All done.**\n\nTests pass (`swift test`)."}' | renv FAKE_TMUX_SESSION=plain-main -- hook done >/dev/null
@@ -1002,6 +1005,17 @@ O=$(echo note | run move --local deltaL main feature/d false 2>&1); RC=$?
 assert_contains "move --local refuses a checkout that is not exactly origin's" "$O" "is not at origin/feature/d"
 assert_eq "  ...exit 1"                                   "$RC" "1"
 git -C "$T/root/deltaL" reset -q --hard HEAD~1
+
+section "move: waiting for input is idle"
+printf '{"state":"blocked","waiting_for":"idle_prompt","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
+assert_eq "an agent waiting for your next message can move" \
+  "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r '"\(.movable) [\(.why)]"')" "true []"
+printf '{"state":"blocked","waiting_for":"permission_prompt","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
+assert_contains "  ...one waiting for a permission can not" "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "waiting on you"
+printf '{"state":"blocked","waiting_for":"idle_prompt","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" -- move --ask deltaL-main 2>&1)
+assert_eq "  ...and --ask asks it"                        "$O" "$(cat "$T/note.txt")"
+rm -f "$T/state/deltaL-main.json"
 
 section "a session whose worktree is gone"
 # The agent merged its branch and removed its own worktree, then kept working

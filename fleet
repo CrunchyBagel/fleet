@@ -358,7 +358,7 @@ status_project() {
           --argjson activity "${activity:-0}" --argjson worktree "$in_wt" --arg af "$af" --arg remote "$remote" \
           --arg claude_session "$claude_session" --argjson h "$hookjson" --argjson st "$stats" \
           '$ARGS.named | .attached_from = (.af | split(" ") | map(select(. != ""))) | del(.af)
-           | .prompt = ($h.prompt // "" | if test("^\\s*<[a-z-]+[ >]") then "" else . end) | .note = ($h.note // "") | .said = ($h.said // "")
+           | .prompt = ($h.prompt // "" | if test("^\\s*<[a-z-]+[ >]") then "" else . end) | .note = ($h.note // "") | .said = ($h.said // "") | .waiting_for = ($h.waiting_for // "")
            | .model = ($st.model // "") | .context_pct = ($st.context_pct // -1) | .cost_usd = ($st.cost_usd // 0)
            | .limit_5h = ($st.limit_5h // -1) | .limit_5h_reset = ($st.limit_5h_reset // 0)
            | .limit_7d = ($st.limit_7d // -1) | .limit_7d_reset = ($st.limit_7d_reset // 0)
@@ -985,7 +985,7 @@ record_json() {
 move_refusal() {
   printf '%s' "$1" | jq -r '
     if   .state == "running"     then "the agent is working; move it once it is done"
-    elif .state == "blocked"     then "the agent is waiting on you; answer it first"
+    elif .state == "blocked" and .waiting_for != "idle_prompt" then "the agent is waiting on you; answer it first"
     elif .branch == "(detached)" then "detached HEAD: there is no branch to move"
     elif .dirty                  then "uncommitted changes; commit and push them first"
     elif .upstream == ""         then "\(.branch) was never pushed"
@@ -1094,9 +1094,10 @@ move_ask() {
   case "$(pane_command "$s")" in ""|sh|bash|zsh|fish|tmux) return 0 ;; esac
   f="$FLEET_STATE/$s.json"; pending="$FLEET_STATE/$s.handoff-pending"
   # This Mac's state file is fresher than the record move checked over ssh.
-  case "$(jq -r '.state // ""' "$f" 2>/dev/null || true)" in
-    running) die "the agent in $s is working; move it once it is done" ;;
-    blocked) die "the agent in $s is waiting on you; answer it first" ;;
+  case "$(jq -r '"\(.state // "") \(.waiting_for // "")"' "$f" 2>/dev/null || true)" in
+    "running "*)           die "the agent in $s is working; move it once it is done" ;;
+    "blocked idle_prompt") ;;                   # its turn is over: waiting for a message is idle
+    "blocked "*)           die "the agent in $s is waiting on you; answer it first" ;;
   esac
   # The marker holds the pid of the move waiting on it: an interrupted move's
   # --ask can outlive its ssh, and must neither be joined nor have its marker
@@ -3023,7 +3024,10 @@ cmd_hook() {
                elif $nt == "agent_needs_input" then "needs input"
                elif $nt == "elicitation_dialog" or $nt == "elicitation_url_dialog" then "asking a question"
                elif $nt != "" then $nt else ($o.note // "needs you") end),
-        said: $said }
+        said: $said,
+        # What a blocked agent waits for: idle_prompt = its turn is over and
+        # it waits for your next message; anything else is a real question.
+        waiting_for: (if $state == "blocked" then $nt else "" end) }
     | if $full and $state == "done"
       then .handoff = ($in.last_assistant_message // "" | if type == "string" then . else "" end
                        | gsub("\r"; "") | gsub("[\\x01-\\x08\\x0b-\\x1f\\x7f]"; "") | .[:20000])
