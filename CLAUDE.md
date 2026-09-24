@@ -403,7 +403,17 @@ whoever runs it.
   include down Macs), Remove… (confirmed), Get from. A first version drew
   the CLI's matrix (dots, digests, cell menus); the owner found it ugly and
   un-Mac-like, so do not go back to that. Badge = differing items without
-  permission rules, which sit in a collapsed section. Not polled: loaded
+  permission rules, which sit in a collapsed section. A bar of segmented
+  pickers above the list (not toolbar menus: the owner found those hard
+  to see and to change, and the choice was not visible) turns the list
+  into one Mac's report ("what does studio have or lack"), with a second
+  picker to compare it with every other Mac (default) or with one, and
+  holds the Differences/All switch; the rows, the Differences filter and the wording follow
+  that choice (`Perspective` in the view, `ClaudeItem.differs(among:)` and
+  `status(on:against:)`: "Missing on studio · on the other Macs", "Only on
+  studio, not on mini", "Version A on studio · B on mini"), the inspector
+  lists the chosen Macs first, and the sidebar badge stays the overall
+  count. It is view state, not a preference. Not polled: loaded
   after the first load, when shown, on ⌘R/toolbar Refresh (`refreshNow`)
   and after each action. Its sidebar row's `.tag` must come after
   `.badge`: a tag under `.badge` is invisible to the List and the row

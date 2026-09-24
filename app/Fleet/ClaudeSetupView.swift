@@ -4,11 +4,16 @@ import SwiftUI
 /// between the Macs (`fleet claude --json`), as a list that says in words
 /// what differs, and an inspector showing the selected item on each Mac.
 /// Permission rules sit in a collapsed section: they outnumber everything
-/// else and matter less.
+/// else and matter less. The bar above the list (segmented, so the choice
+/// is always in view) turns it into one Mac's report (what it has or lacks
+/// against the other Macs, or against one chosen Mac): the rows, the
+/// Differences filter and the wording are then relative to it.
 struct ClaudeSetupView: View {
     @EnvironmentObject var model: FleetModel
     @State private var onlyDifferences = true
     @State private var search = ""
+    @State private var focus: String?          // the Mac whose report this is; nil = every Mac at once
+    @State private var against: String?        // the one Mac it is compared with; nil = all the others
 
     static let kinds = ["error", "marketplace", "plugin", "mcp", "setting", "file"]
 
@@ -29,17 +34,8 @@ struct ClaudeSetupView: View {
             .navigationTitle("Claude Setup")
             .navigationSubtitle(subtitle)
             .searchable(text: $search, placement: .toolbar, prompt: "Plugin, server, setting or rule")
-            .toolbar {
-                ToolbarItem {
-                    Picker("Show", selection: $onlyDifferences) {
-                        Text("Differences").tag(true)
-                        Text("All").tag(false)
-                    }
-                    .pickerStyle(.segmented).fixedSize()
-                    .help("Show only what differs between the Macs, or everything")
-                }
-            }
             .task { model.loadClaudeSetup() }
+            .onChange(of: focus) { _, f in if f == nil || against == f { against = nil } }
             .onDisappear { if !model.claudeActionRunning { model.claudeAction = nil } }
             .confirmationDialog(
                 "Remove \(model.claudeConfirmRemove?.item.displayName ?? "") from \(model.claudeConfirmRemove?.host ?? "")?",
@@ -63,51 +59,56 @@ struct ClaudeSetupView: View {
 
     @ViewBuilder private var content: some View {
         if let s = model.claudeSetup {
-            let hosts = columns(s)
+            let view = Perspective(answered: columns(s), focus: focus, against: against)
+            let hosts = view.hosts
             let sections = Self.kinds.compactMap { k -> (String, [ClaudeItem])? in
-                let rows = s.items.filter { $0.kind == k && (k == "error" || !onlyDifferences || $0.differs) && matches($0) }
+                let rows = s.items.filter { $0.kind == k && (k == "error" || !onlyDifferences || view.differs($0)) && matches($0) }
                 return rows.isEmpty ? nil : (k, rows)
             }
-            let rules = s.items.filter { $0.kind == "perm" && (!onlyDifferences || $0.differs) && matches($0) }
-            if sections.isEmpty && rules.isEmpty && search.isEmpty {
-                ContentUnavailableView(onlyDifferences ? "All Macs match" : "Nothing set up",
-                                       systemImage: "checkmark.seal",
-                                       description: Text(downNote(s) ?? "Every Mac that answered has the same Claude Code setup."))
-            } else {
-                List(selection: $model.claudeSelected) {
-                    if !s.down.isEmpty {
-                        ForEach(s.down.sorted { $0.key < $1.key }, id: \.key) { h, why in
-                            Label("\(h) isn't answering: \(why)", systemImage: "bolt.slash")
-                                .font(.callout).foregroundStyle(.secondary).selectionDisabled()
+            let rules = s.items.filter { $0.kind == "perm" && (!onlyDifferences || view.differs($0)) && matches($0) }
+            VStack(spacing: 0) {
+                scopeBar(answered: columns(s))
+                Divider()
+                if sections.isEmpty && rules.isEmpty && search.isEmpty {
+                    ContentUnavailableView(onlyDifferences ? view.matchTitle : "Nothing set up",
+                                           systemImage: "checkmark.seal",
+                                           description: Text(downNote(s) ?? view.matchNote))
+                } else {
+                    List(selection: $model.claudeSelected) {
+                        if !s.down.isEmpty {
+                            ForEach(s.down.sorted { $0.key < $1.key }, id: \.key) { h, why in
+                                Label("\(h) isn't answering: \(why)", systemImage: "bolt.slash")
+                                    .font(.callout).foregroundStyle(.secondary).selectionDisabled()
+                            }
+                        }
+                        ForEach(sections, id: \.0) { kind, rows in
+                            Section(ClaudeItem.title(kind)) {
+                                ForEach(rows) { ClaudeRow(item: $0, status: view.status($0), differs: view.differs($0)).tag($0.id) }
+                            }
+                        }
+                        if !rules.isEmpty {
+                            Section(isExpanded: $model.claudeShowRules) {
+                                ForEach(rules) { ClaudeRow(item: $0, status: view.status($0), differs: view.differs($0)).tag($0.id) }
+                            } header: {
+                                let n = rules.filter(view.differs).count
+                                Text("Permission rules — \(n) differ" + (onlyDifferences ? "" : ", \(rules.count - n) the same"))
+                            }
                         }
                     }
-                    ForEach(sections, id: \.0) { kind, rows in
-                        Section(ClaudeItem.title(kind)) {
-                            ForEach(rows) { ClaudeRow(item: $0, hosts: hosts).tag($0.id) }
-                        }
-                    }
-                    if !rules.isEmpty {
-                        Section(isExpanded: $model.claudeShowRules) {
-                            ForEach(rules) { ClaudeRow(item: $0, hosts: hosts).tag($0.id) }
-                        } header: {
-                            let n = rules.filter(\.differs).count
-                            Text("Permission rules — \(n) differ" + (onlyDifferences ? "" : ", \(rules.count - n) the same"))
-                        }
+                    .listStyle(.inset(alternatesRowBackgrounds: true))
+                    .overlay { if sections.isEmpty && rules.isEmpty { ContentUnavailableView.search(text: search) } }
+                }
+            }
+            .inspector(isPresented: .constant(true)) {
+                Group {
+                    if let id = model.claudeSelected, let item = s.items.first(where: { $0.id == id }) {
+                        ClaudeInspector(item: item, hosts: hosts)
+                    } else {
+                        ContentUnavailableView("Select an item", systemImage: "sidebar.right",
+                                               description: Text("See it on every Mac, and copy or remove it."))
                     }
                 }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
-                .overlay { if sections.isEmpty && rules.isEmpty { ContentUnavailableView.search(text: search) } }
-                .inspector(isPresented: .constant(true)) {
-                    Group {
-                        if let id = model.claudeSelected, let item = s.items.first(where: { $0.id == id }) {
-                            ClaudeInspector(item: item, hosts: hosts)
-                        } else {
-                            ContentUnavailableView("Select an item", systemImage: "sidebar.right",
-                                                   description: Text("See it on every Mac, and copy or remove it."))
-                        }
-                    }
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-                }
+                .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
             }
         } else if let e = model.claudeSetupError {
             ContentUnavailableView("Could not read the Claude setups", systemImage: "exclamationmark.triangle", description: Text(e))
@@ -116,6 +117,36 @@ struct ClaudeSetupView: View {
         }
     }
 
+    /// The controls above the list, always in view with their choice showing:
+    /// which Mac's report this is (every Mac at once, or one), what that Mac
+    /// is compared with, and whether to list only what differs.
+    private func scopeBar(answered: [String]) -> some View {
+        HStack(spacing: 16) {
+            Picker("Mac", selection: $focus) {
+                Text("All Macs").tag(String?.none)
+                ForEach(answered, id: \.self) { Text($0).tag(String?.some($0)) }
+            }
+            .help("Every Mac at once, or one Mac's report: what it has or lacks")
+            if let f = focus {
+                Picker("Compared with", selection: $against) {
+                    Text("All others").tag(String?.none)
+                    ForEach(answered.filter { $0 != f }, id: \.self) { Text($0).tag(String?.some($0)) }
+                }
+                .help("Compare \(f) with every other Mac, or with one of them")
+            }
+            Spacer(minLength: 0)
+            Picker("Show", selection: $onlyDifferences) {
+                Text("Differences").tag(true)
+                Text("All").tag(false)
+            }
+            .help("Show only what differs, or everything")
+        }
+        .pickerStyle(.segmented)
+        .fixedSize(horizontal: false, vertical: true)
+        .controlSize(.small)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.bar)
+    }
     /// The Macs that answered, this one first.
     private func columns(_ s: ClaudeSetup) -> [String] {
         let me = model.selfHost
@@ -129,11 +160,52 @@ struct ClaudeSetupView: View {
     }
 }
 
+/// Which Macs the screen looks at: all of them, or one against the others
+/// (or against one). Row wording, the Differences filter and the order the
+/// inspector lists the Macs in all follow it.
+private struct Perspective {
+    let answered: [String]
+    let focus: String?
+    let others: [String]
+    init(answered: [String], focus: String?, against: String?) {
+        self.answered = answered
+        self.focus = focus.flatMap { answered.contains($0) ? $0 : nil }
+        if let f = self.focus {
+            others = against.flatMap { $0 != f && answered.contains($0) ? [$0] : nil } ?? answered.filter { $0 != f }
+        } else {
+            others = []
+        }
+    }
+    /// The Macs in the order the inspector shows them: the focused one, the
+    /// ones it is compared with, then the rest.
+    var hosts: [String] {
+        guard let f = focus else { return answered }
+        return [f] + others + answered.filter { $0 != f && !others.contains($0) }
+    }
+    func differs(_ item: ClaudeItem) -> Bool {
+        guard let f = focus else { return item.differs }
+        return item.differs(among: [f] + others)
+    }
+    func status(_ item: ClaudeItem) -> String {
+        guard let f = focus else { return item.status(answered) }
+        return item.status(on: f, against: others)
+    }
+    var matchTitle: String {
+        guard let f = focus else { return "All Macs match" }
+        return "\(f) matches " + (others.count == 1 ? others[0] : "the other Macs")
+    }
+    var matchNote: String {
+        guard let f = focus else { return "Every Mac that answered has the same Claude Code setup." }
+        return "\(f) has the same Claude Code setup as " + (others.count == 1 ? others[0] : "every other Mac that answered") + "."
+    }
+}
+
 /// A row: kind icon, plain name (marketplace or rule list under it), and
 /// what differs in words.
 private struct ClaudeRow: View {
     let item: ClaudeItem
-    let hosts: [String]
+    let status: String
+    let differs: Bool
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: ClaudeSetupView.icon(item.kind))
@@ -144,8 +216,8 @@ private struct ClaudeRow: View {
                 if let q = item.qualifier { Text(q).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 16)
-            Text(item.status(hosts))
-                .foregroundStyle(item.kind == "error" ? Color.orange : item.differs ? Color.primary : Color.secondary)
+            Text(status)
+                .foregroundStyle(item.kind == "error" ? Color.orange : differs ? Color.primary : Color.secondary)
                 .lineLimit(1)
         }
         .padding(.vertical, 2)

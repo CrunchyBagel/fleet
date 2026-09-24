@@ -389,6 +389,62 @@ extension ClaudeItem {
         if !missing.isEmpty { parts.append((kind == "setting" ? "Not set on " : "Missing on ") + missing.formatted(.list(type: .and))) }
         return parts.isEmpty ? "Same on all Macs" : parts.joined(separator: " · ")
     }
+    /// Whether the item differs between just these Macs (missing counts as a value).
+    func differs(among hosts: [String]) -> Bool {
+        Set(hosts.map { cell($0)?.digest }).count > 1
+    }
+    /// The item from one Mac's side, against `others` (every other Mac
+    /// that answered, or the one it is compared with): "Missing on studio
+    /// · on the other Macs", "Only on studio", "Version A on studio · B on
+    /// mini", "Same as mini".
+    func status(on h: String, against others: [String]) -> String {
+        let have = others.filter { cell($0) != nil }, missing = others.filter { cell($0) == nil }
+        func list(_ hs: [String]) -> String {
+            hs.count == others.count && others.count > 1 ? "the other Macs" : hs.formatted(.list(type: .and))
+        }
+        let missWord = kind == "setting" ? "not set on" : "missing on"
+        let missCap = kind == "setting" ? "Not set on" : "Missing on"
+        if kind == "error" { return cell(h) != nil ? "Not valid JSON on \(h)" : "Not valid JSON on " + list(have) }
+        guard let c = cell(h) else {
+            if have.isEmpty { return "Nowhere" }
+            return "\(missCap) \(h) · on " + list(have)
+        }
+        if have.isEmpty { return others.count == 1 ? "Only on \(h), not on \(others[0])" : "Only on \(h)" }
+        var parts: [String] = []
+        if kind == "mcp", providingPlugin != nil {
+            // Where it comes from matters more than its digest: a plugin here, an entry there.
+            let via = have.filter { cell($0)?.plugin != nil }, alone = have.filter { cell($0)?.plugin == nil }
+            if c.plugin != nil, !alone.isEmpty { parts.append("Via plugin on \(h) · standalone on " + list(alone)) }
+            if c.plugin == nil, !via.isEmpty { parts.append("Standalone on \(h) · via plugin on " + list(via)) }
+        } else {
+            let diff = have.filter { cell($0)?.digest != c.digest }
+            if !diff.isEmpty {
+                switch kind {
+                case "plugin":
+                    parts.append(c.summary == "disabled" ? "Disabled on \(h) · enabled on " + list(diff)
+                                                         : "Enabled on \(h) · disabled on " + list(diff))
+                case "setting" where name != "env":
+                    // The CLI clips values to 12 characters: when the other
+                    // values clip alike, say only that they differ.
+                    var seen: [String] = []
+                    for o in diff { let v = cell(o)!.summary; if !seen.contains(v) { seen.append(v) } }
+                    let mine = c.summary.isEmpty ? "\"\"" : c.summary
+                    if seen.count == 1 && seen[0] != c.summary {
+                        parts.append("\(mine) on \(h) · \(seen[0].isEmpty ? "\"\"" : seen[0]) on " + list(diff))
+                    } else {
+                        parts.append("\(mine) on \(h) · differs on " + list(diff))
+                    }
+                default:
+                    let v = versions([h] + others)
+                    parts.append("Version \(v[c.digest] ?? "?") on \(h) · "
+                                 + diff.map { "\(v[cell($0)!.digest] ?? "?") on \($0)" }.joined(separator: ", "))
+                }
+            }
+        }
+        if !missing.isEmpty { parts.append((parts.isEmpty ? missCap : missWord) + " " + list(missing)) }
+        if parts.isEmpty { return others.count == 1 ? "Same as \(others[0])" : "Same on all Macs" }
+        return parts.joined(separator: " · ")
+    }
     /// One Mac's line in the inspector.
     func detail(_ host: String, versions: [String: String]) -> String {
         guard let c = cell(host) else {
