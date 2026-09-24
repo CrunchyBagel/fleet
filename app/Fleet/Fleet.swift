@@ -218,6 +218,21 @@ struct FleetCLI {
     static func kill(host: String, session: String, progress: @escaping @Sendable (String) -> Void) async throws {
         try await runStreaming(["kill", "-y", host, session], onLine: progress)
     }
+    /// `fleet move --targets <host> <session> --json`.
+    static func moveTargets(host: String, session: String) async throws -> MoveTargets {
+        try await decode(MoveTargets.self, from: run(["move", "--targets", host, session, "--json"], timeout: pollTimeout))
+    }
+    /// `fleet move -y --no-attach` (the app has asked already): the agent
+    /// writes its note (up to FLEET_HANDOFF_TIMEOUT, 180s by default), the
+    /// target starts the session, the source ends. Returns (host, session,
+    /// dir) of the new session. fleet prints its steps as it goes.
+    static func move(host: String, session: String, to target: String,
+                     progress: @escaping @Sendable (String) -> Void) async throws -> (String, String, String) {
+        let out = try await runStreaming(["move", "-y", "--no-attach", host, session, target], timeout: 600, onLine: progress)
+        let parts = (out.split(separator: "\n").last ?? "").split(separator: "\t").map(String.init)
+        guard parts.count == 3 else { throw FleetError.failed(command: "fleet move", status: 1, stderr: "unexpected output") }
+        return (parts[0], parts[1], parts[2])
+    }
     /// `fleet doctor <host>`: the text report, exit 1 meaning "has FAILs".
     static func doctor(host: String) async throws -> String {
         try await run(["doctor", host], tolerate: true)

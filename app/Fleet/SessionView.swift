@@ -82,6 +82,30 @@ struct SessionView: View {
                                  help: "Open Screen Sharing to \(session.host)") { model.screenShare(session.host) }
                         .disabled(model.downReason(for: session.host) != nil)
                 }
+                Menu {
+                    if let mt = model.moveTargets[session.id] {
+                        ForEach(mt.targets) { t in
+                            Button(t.ok ? t.host : "\(t.host): \(t.why)") {
+                                model.confirmMove = PendingMove(session: session, target: t.host)
+                            }
+                            .disabled(!t.ok)
+                        }
+                    } else {
+                        Text("Finding Macs that have this repo…")
+                    }
+                } label: {
+                    VStack(spacing: 5) {   // same shape as the GitHub menu
+                        Image(systemName: "arrow.right.circle").font(.title2).frame(height: 24)
+                        HStack(spacing: 3) {
+                            Text("Move")
+                            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).opacity(0.85)
+                        }.font(.caption.weight(.semibold))
+                    }
+                }
+                .menuStyle(.button).buttonStyle(FilledStyle(tint: .teal)).menuIndicator(.hidden)
+                .disabled(session.moveBlocker != nil || model.busy[session.id] != nil
+                          || model.moveTargets[session.id]?.targets.contains(where: \.ok) == false)
+                .help(moveHelp)
                 Spacer()
                 ActionButton(title: "End", system: "xmark.octagon", tint: .red,
                              help: "End this session: the agent is asked to exit, then its tmux session is closed (asks first)") { model.confirmEnd = session }
@@ -161,6 +185,18 @@ struct SessionView: View {
             Spacer()
         }
         .padding()
+        .task(id: "\(session.id)|\(session.moveBlocker ?? "")") {
+            if session.moveBlocker == nil { model.loadMoveTargets(session) }
+        }
+    }
+
+    /// The Move button's tooltip: why it is disabled, else what it does.
+    private var moveHelp: String {
+        if let b = session.moveBlocker { return b }
+        if let mt = model.moveTargets[session.id], !mt.targets.contains(where: \.ok) {
+            return "No other Mac can take this session: " + mt.targets.map { "\($0.host): \($0.why)" }.joined(separator: "; ")
+        }
+        return "Move this session to another Mac: the agent writes a handoff note, this session ends, and a new one starts there with the note"
     }
 }
 

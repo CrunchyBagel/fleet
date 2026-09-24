@@ -82,6 +82,36 @@ extension FleetModel {
             refresh()
         }
     }
+    /// Which Macs can take a session; the Move menus show the answer.
+    func loadMoveTargets(_ s: Session) {
+        let id = s.id
+        Task {
+            do { moveTargets[id] = try await FleetCLI.moveTargets(host: s.host, session: s.session) }
+            catch { moveTargets[id] = nil; actionError = "move targets for \(s.title): \(Self.reason(error))" }
+        }
+    }
+    /// After the confirmation: fleet asks the agent for its handoff note,
+    /// starts the session on the target with it, then ends this one. The
+    /// steps show in the busy row; the new session is selected and attached.
+    func moveSession(_ s: Session, to target: String) {
+        let id = s.id, t = Terminal.preferred
+        actionError = nil
+        busy[id] = "Asking the agent for a handoff note…"
+        Task {
+            do {
+                let (h, sess, _) = try await FleetCLI.move(host: s.host, session: s.session, to: target) { line in
+                    Task { @MainActor in self.busy[id] = line }
+                }
+                busy[id] = nil
+                moveTargets[id] = nil
+                selected = .session("\(h)/\(sess)")
+                refresh()
+                try await FleetCLI.attach(host: h, session: sess, terminal: t)
+            } catch { actionError = "move \(s.title) to \(target): \(Self.reason(error))" }
+            busy[id] = nil
+            refresh()
+        }
+    }
     func shell(on host: String, dir: String? = nil) {
         let t = Terminal.preferred
         perform("shell on \(host)") { try await FleetCLI.shell(host: host, dir: dir, terminal: t) }

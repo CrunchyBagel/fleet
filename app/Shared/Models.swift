@@ -420,3 +420,34 @@ extension ClaudeItem {
         }
     }
 }
+
+/// `fleet move --targets <host> <session> --json`: whether the session can
+/// move now, and which other Macs can take it (and why the others can not).
+struct MoveTargets: Codable, Hashable {
+    struct Source: Codable, Hashable { let host: String; let session: String }
+    struct Target: Codable, Hashable, Identifiable {
+        let host: String
+        let project: String
+        let ok: Bool
+        let why: String
+        var id: String { host }
+    }
+    let source: Source
+    let movable: Bool
+    let why: String
+    let targets: [Target]
+}
+
+extension Session {
+    /// Why this session can not move to another Mac yet, from the record
+    /// alone; the CLI's move_refusal, same rules in the same order.
+    var moveBlocker: String? {
+        if state == "running" { return "The agent is working; move it once it is done" }
+        if state == "blocked" { return "The agent is waiting on you; answer it first" }
+        if branch == "(detached)" { return "Detached HEAD: there is no branch to move" }
+        if dirty { return "Uncommitted changes; commit and push them first" }
+        if upstream.isEmpty { return "\(branch) was never pushed" }
+        if ahead > 0 { return "\(ahead) commit\(ahead == 1 ? "" : "s") not pushed" }
+        return nil
+    }
+}

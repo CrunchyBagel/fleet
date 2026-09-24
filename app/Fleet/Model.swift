@@ -29,6 +29,13 @@ struct MachineRow: Identifiable {
     var id: String { host }
 }
 
+/// A move the owner picked from a Move menu, waiting on the confirmation.
+struct PendingMove: Identifiable {
+    let session: Session
+    let target: String
+    var id: String { session.id + "→" + target }
+}
+
 struct SidebarNode: Identifiable {
     let item: Item
     let children: [SidebarNode]?
@@ -82,6 +89,8 @@ final class FleetModel: ObservableObject {
     }()
     @Published var newSessionOn: NewSessionTarget?
     @Published var confirmEnd: Session?             // the End-session dialog is up for this one
+    @Published var moveTargets: [String: MoveTargets] = [:]   // session id -> fleet move --targets
+    @Published var confirmMove: PendingMove?                 // the Move dialog is up for this
     var openMain: (() -> Void)?                     // set by the window; reopens it when closed
 
     // Hosts tab of Settings.

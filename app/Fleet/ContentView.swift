@@ -93,6 +93,15 @@ struct ContentView: View {
                  ? "The agent is asked to exit (a running turn is interrupted), then the tmux session is closed. The worktree and its branch stay; fleet reap removes it once merged."
                  : "The agent is asked to exit (a running turn is interrupted), then the tmux session is closed. Uncommitted work in the checkout is untouched.")
         }
+        .confirmationDialog(
+            "Move \(model.confirmMove?.session.title ?? "") to \(model.confirmMove?.target ?? "")?",
+            isPresented: Binding(get: { model.confirmMove != nil }, set: { if !$0 { model.confirmMove = nil } }),
+            presenting: model.confirmMove
+        ) { m in
+            Button("Move Session") { model.moveSession(m.session, to: m.target) }
+        } message: { m in
+            Text("The agent writes a handoff note, this session on \(m.session.host) ends, and a new one starts on \(m.target) with the note, on \(m.session.branch) as pushed.")
+        }
         .toolbar {
             ToolbarItem {
                 Button { model.refreshNow() } label: { Image(systemName: "arrow.clockwise") }
@@ -140,6 +149,17 @@ struct SessionMenu: View {
         if let cu = session.claudeURL { Button("Open in Claude") { NSWorkspace.shared.open(cu) } }
         if let gh = session.githubURL { Button("GitHub") { NSWorkspace.shared.open(gh) } }
         Button("Copy Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(session.path, forType: .string) }
+        if let mt = model.moveTargets[session.id], session.moveBlocker == nil {
+            Menu("Move To") {
+                ForEach(mt.targets) { t in
+                    Button(t.ok ? t.host : "\(t.host): \(t.why)") { model.confirmMove = PendingMove(session: session, target: t.host) }
+                        .disabled(!t.ok)
+                }
+            }
+        } else {
+            Button("Move To…") { model.selected = .session(session.id) }   // its screen loads the targets
+                .disabled(session.moveBlocker != nil)
+        }
         Divider()
         Button("End Session…") { model.confirmEnd = session }
     }
