@@ -944,6 +944,9 @@ kill_local() {   # $1 session
 #   move --ask    on the source: ask the agent for its handoff note
 #   move --local  on the target: checkout at origin/<branch>, start the session
 
+# Typed into the source agent's pane by move --ask. One line: send-keys -l.
+HANDOFF_PROMPT="This session is being moved to another Mac. Do not change, commit or push anything. Reply with a handoff note for the agent that continues there: the goal, what is done, what is next, and any open questions or decisions pending with the owner. Reply with the note only."
+
 # record_json <host> <session>: that fleet session's record, one JSON line.
 record_json() {
   local h="$1" sess="$2" tmp rec why=""
@@ -1047,11 +1050,43 @@ move_targets() {
       done
 }
 
+# fleet move --ask <session>: on the session's host. Ask the agent in it for
+# a handoff note and print the note once its turn is done (the hook keeps
+# the whole reply as `handoff` while the marker exists). Nothing is printed
+# when no agent is in the pane: nobody to ask. Fails, leaving the session as
+# it was, when no note comes within FLEET_HANDOFF_TIMEOUT or the agent asks
+# for something instead.
+move_ask() {
+  local s="${1:-}" f pending t0 i=0 st note=""
+  [ -n "$s" ] || die "usage: fleet move --ask <session>"
+  tmux has-session -t "$s" 2>/dev/null || return 0
+  case "$(pane_command "$s")" in ""|sh|bash|zsh|fish|tmux) return 0 ;; esac
+  f="$FLEET_STATE/$s.json"; pending="$FLEET_STATE/$s.handoff-pending"
+  mkdir -p "$FLEET_STATE"; : > "$pending"
+  # shellcheck disable=SC2064  # expanded now: $pending is local, gone by the time the trap runs
+  trap "rm -f $(shq "$pending")" EXIT
+  t0=$(date +%s)
+  tmux send-keys -t "$s" C-u 2>/dev/null || true
+  tmux send-keys -t "$s" -l "$HANDOFF_PROMPT" 2>/dev/null || die "could not type into $s"
+  tmux send-keys -t "$s" Enter 2>/dev/null || true
+  while [ "$i" -lt "$FLEET_HANDOFF_TIMEOUT" ]; do
+    sleep 1; i=$((i + 1))
+    st=$(jq -r --argjson t0 "$t0" 'select(.ts >= $t0) | .state' "$f" 2>/dev/null || true)
+    case "$st" in
+      done)    note=$(jq -r '.handoff // .said // ""' "$f" 2>/dev/null || true); [ -z "$note" ] || break ;;
+      blocked) die "the agent in $s asked for something instead of writing the note; answer it there, then move again" ;;
+    esac
+  done
+  [ -n "$note" ] || die "no handoff note from $s after ${FLEET_HANDOFF_TIMEOUT}s; it was left as it was"
+  printf '%s\n' "$note"
+}
+
 # fleet move [-y] [--no-attach] [--model <m>] <host> <session> [target]
 cmd_move() {
   case "${1:-}" in
     --check)   shift; move_check "$@"; return 0 ;;
     --targets) shift; move_targets "$@"; return 0 ;;
+    --ask)     shift; move_ask "${1:-}"; return 0 ;;
   esac
   die "usage: fleet move [-y] [--no-attach] [--model <m>] <host> <session> [target]"
 }

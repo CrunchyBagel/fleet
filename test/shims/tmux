@@ -6,5 +6,20 @@ case "${1:-}" in
   display-message) echo "${FAKE_TMUX_SESSION:-detached}" ;;
   list-clients)    exit 0 ;;
   list-panes)      echo "${FAKE_TMUX_COMMAND:-zsh}" ;;   # what runs in the pane: zsh, or claude
+  send-keys)
+    # FAKE_TMUX_ANSWER=<file>: play the agent answering fleet move's handoff
+    # request: a done state file whose handoff is that file's text, as the
+    # hook writes it while the request is pending. FAKE_TMUX_ANSWER_RUN runs
+    # first: the agent doing something it was told not to. FAKE_TMUX_ANSWER=
+    # blocked: the agent asks for permission instead.
+    case "$*" in *"handoff note"*)
+      if [ "${FAKE_TMUX_ANSWER:-}" = blocked ]; then
+        printf '{"state":"blocked","ts":%s}' "$(date +%s)" > "$FLEET_STATE/$3.json"
+      elif [ -n "${FAKE_TMUX_ANSWER:-}" ]; then
+        [ -z "${FAKE_TMUX_ANSWER_RUN:-}" ] || sh -c "$FAKE_TMUX_ANSWER_RUN"
+        jq -n --rawfile h "$FAKE_TMUX_ANSWER" --argjson ts "$(date +%s)" \
+          '{state: "done", ts: $ts, said: $h[:800], handoff: $h}' > "$FLEET_STATE/$3.json"
+      fi ;;
+    esac ;;
 esac
 exit 0

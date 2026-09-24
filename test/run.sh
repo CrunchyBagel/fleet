@@ -869,5 +869,26 @@ assert_eq "--check: no clone of the repo"                 "$(run move --check no
 assert_eq "--check: a same-named folder of another repo is not used; the clone with that origin is" \
   "$(run move --check plain "$T/origins/delta.git" main feature/d false | jq -r .project)" "deltaL"
 
+printf 'Goal: ship it.\nNext: run `make` with "$HOME" set; don'\''t push.' > "$T/note.txt"
+: > "$SHIM_LOG"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" -- move --ask deltaL-main 2>&1); RC=$?
+assert_eq "--ask prints the agent's note verbatim"       "$O" "$(cat "$T/note.txt")"
+assert_eq "  ...exit 0"                                   "$RC" "0"
+assert_contains "  ...having typed the request literally" "$(cat "$SHIM_LOG")" "tmux send-keys -t deltaL-main -l This session is being moved to another Mac."
+assert_false "  ...and the pending marker is gone"        test -e "$T/state/deltaL-main.handoff-pending"
+rm -f "$T/state/deltaL-main.json"
+: > "$SHIM_LOG"
+assert_eq "--ask with no agent in the pane asks nobody"   "$(renv "${MV[@]}" -- move --ask deltaL-main 2>&1)" ""
+assert_lacks "  ...types nothing"                         "$(cat "$SHIM_LOG")" "send-keys"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FLEET_HANDOFF_TIMEOUT=1 -- move --ask deltaL-main 2>&1); RC=$?
+assert_contains "--ask gives up after FLEET_HANDOFF_TIMEOUT" "$O" "no handoff note from deltaL-main after 1s"
+assert_eq "  ...exit 1"                                   "$RC" "1"
+assert_false "  ...the pending marker is gone"            test -e "$T/state/deltaL-main.handoff-pending"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER=blocked -- move --ask deltaL-main 2>&1); RC=$?
+assert_contains "--ask stops when the agent asks for something instead" "$O" "asked for something instead of writing the note"
+assert_eq "  ...exit 1"                                   "$RC" "1"
+assert_false "  ...the pending marker is gone"            test -e "$T/state/deltaL-main.handoff-pending"
+rm -f "$T/state/deltaL-main.json"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
