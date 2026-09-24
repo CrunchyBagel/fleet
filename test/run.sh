@@ -890,5 +890,72 @@ assert_eq "  ...exit 1"                                   "$RC" "1"
 assert_false "  ...the pending marker is gone"            test -e "$T/state/deltaL-main.handoff-pending"
 rm -f "$T/state/deltaL-main.json"
 
+H="$RH/.local/state/fleet/deltaS-main.handoff"
+mv_reset() {   # studio's clone back on main with no session; deltaL-main registered on laptop again
+  git -C "$T/rootR/deltaS" checkout -q main 2>/dev/null
+  rm -f "$RH/.local/state/fleet/sessions/deltaS-main" "$H" "$T/state/deltaL-main.json"
+  run new --local deltaL >/dev/null
+}
+assert_contains "move without -y and no tty refuses" "$(renv "${MV[@]}" -- move laptop deltaL-main studio 2>&1 </dev/null)" "without -y"
+assert_contains "move to a host that can not take it says why" \
+  "$(renv "${MV[@]}" "FAKE_TMUX_SESSIONS=plainR-main deltaL-main deltaS-main" -- move -y --no-attach laptop deltaL-main studio 2>&1)" "studio can't take deltaL-main: deltaS-main is already running here"
+
+: > "$SHIM_LOG"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" -- move -y --no-attach laptop deltaL-main studio 2>&1); RC=$?
+assert_eq "move exits 0"                                  "$RC" "0"
+assert_eq "  ...last line: host, session, directory"      "$(printf '%s\n' "$O" | tail -1)" "$(printf 'studio\tdeltaS-main\t%s' "$T/rootR/deltaS")"
+assert_contains "  ...the agent was asked for its note"   "$(cat "$SHIM_LOG")" "send-keys -t deltaL-main -l This session is being moved"
+assert_eq "  ...studio's clone is on the branch"          "$(git -C "$T/rootR/deltaS" rev-parse --abbrev-ref HEAD)" "feature/d"
+assert_eq "  ...at what laptop pushed"                    "$(git -C "$T/rootR/deltaS" rev-parse HEAD)" "$(git -C "$T/root/deltaL" rev-parse HEAD)"
+assert_contains "  ...the first prompt says where it came from" "$(cat "$H")" "moved from laptop to studio by fleet. Branch feature/d, last commit: delta work."
+assert_contains "  ...and carries the note byte for byte" "$(cat "$H")" "$(cat "$T/note.txt")"
+assert_contains "  ...claude there reads it as its first prompt" "$(cat "$SHIM_LOG")" "--remote-control \"\$(cat '$H'; rm -f '$H')\" Enter"
+assert_true "  ...the new session is registered on studio" test -e "$RH/.local/state/fleet/sessions/deltaS-main"
+assert_eq "  ...the source ends only after the target started" \
+  "$(grep -o 'new-session -d -s deltaS-main\|kill-session -t deltaL-main' "$SHIM_LOG" | tr '\n' '|')" "new-session -d -s deltaS-main|kill-session -t deltaL-main|"
+assert_false "  ...no pending marker left"                test -e "$T/state/deltaL-main.handoff-pending"
+
+mv_reset; : > "$SHIM_LOG"
+O=$(renv "${MV[@]}" -- move -y --no-attach laptop deltaL-main studio 2>&1); RC=$?
+assert_eq "no agent in the pane: moves anyway"            "$RC" "0"
+assert_lacks "  ...asking nobody"                         "$(cat "$SHIM_LOG")" "This session is being moved"
+assert_contains "  ...the first prompt says there is no note" "$(cat "$H")" "there is no handoff note"
+
+mv_reset; : > "$SHIM_LOG"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FLEET_HANDOFF_TIMEOUT=1 -- move -y --no-attach laptop deltaL-main studio 2>&1); RC=$?
+assert_eq "no note in time: exit 1"                       "$RC" "1"
+assert_lacks "  ...the source is not ended"               "$(cat "$SHIM_LOG")" "kill-session"
+assert_eq "  ...the target is untouched"                  "$(git -C "$T/rootR/deltaS" rev-parse --abbrev-ref HEAD)" "main"
+
+mv_reset; : > "$SHIM_LOG"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" FAKE_TMUX_ANSWER_RUN="echo oops >> '$T/root/deltaL/d.txt'" -- move -y --no-attach laptop deltaL-main studio 2>&1); RC=$?
+assert_contains "the agent changed files while writing the note: not moved" "$O" "uncommitted changes"
+assert_eq "  ...exit 1"                                   "$RC" "1"
+assert_lacks "  ...the source is not ended"               "$(cat "$SHIM_LOG")" "kill-session"
+git -C "$T/root/deltaL" checkout -q -- d.txt
+
+mv_reset
+run convert deltaL >/dev/null
+run new --local deltaL wt1 >/dev/null
+WT="$T/root/deltaL/.claude/worktrees/wt1"
+git -C "$WT" commit -q --allow-empty -m "wt1 work"; git -C "$WT" push -q -u origin agent/wt1
+O=$(renv "${MV[@]}" -- move -y --no-attach laptop deltaL-wt1 studio 2>&1); RC=$?
+assert_eq "a worktree session moves"                      "$RC" "0"
+assert_eq "  ...into a worktree on studio, converting its plain clone" \
+  "$(printf '%s\n' "$O" | tail -1)" "$(printf 'studio\tdeltaS-wt1\t%s' "$T/rootR/deltaS/.claude/worktrees/wt1")"
+assert_eq "  ...on the branch"                            "$(git -C "$T/rootR/deltaS/.claude/worktrees/wt1" rev-parse --abbrev-ref HEAD)" "agent/wt1"
+assert_true "  ...the clone is marked converted"          test -e "$T/rootR/deltaS/.git/fleet-worktrees"
+
+# The other direction: a session on studio comes to this Mac (the common case).
+git -C "$T/rootR/deltaS" checkout -q feature/d
+printf '%s\ndeltaS\n' "$T/rootR/deltaS" > "$RH/.local/state/fleet/sessions/deltaS-main"
+git -C "$T/root/deltaL" checkout -q main
+rm -f "$T/state/sessions/deltaL-main"
+O=$(renv "${MV[@]}" "FAKE_TMUX_SESSIONS=plainR-main deltaS-main" -- move -y --no-attach studio deltaS-main laptop 2>&1); RC=$?
+assert_eq "studio to laptop: exit 0"                      "$RC" "0"
+assert_eq "  ...laptop's clone is on the branch"          "$(git -C "$T/root/deltaL" rev-parse --abbrev-ref HEAD)" "feature/d"
+assert_eq "  ...the new session is laptop's deltaL-main"  "$(printf '%s\n' "$O" | tail -1 | cut -f1,2)" "$(printf 'laptop\tdeltaL-main')"
+assert_contains "  ...its first prompt came over stdin"   "$(cat "$T/state/deltaL-main.handoff")" "moved from studio to laptop by fleet"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
