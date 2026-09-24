@@ -821,5 +821,53 @@ assert_eq "the record never carries handoff" \
   "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- status --json | jq -r '[.[] | has("handoff")] | any')" "false"
 rm -f "$T/state/plain-main.handoff-pending"
 
+section "move"
+make_origin delta main
+git clone -q "$T/origins/delta.git" "$T/root/deltaL"
+git -C "$T/root/deltaL" checkout -q -b feature/d; echo d > "$T/root/deltaL/d.txt"
+git -C "$T/root/deltaL" add -A; git -C "$T/root/deltaL" commit -qm "delta work"; git -C "$T/root/deltaL" push -q -u origin feature/d
+git clone -q "$T/origins/delta.git" "$T/rootR/deltaS"          # studio: the same repo under another name, on main
+run new --local deltaL >/dev/null                               # the session to move: deltaL-main on laptop
+MV=(FLEET_HOSTS="laptop studio" "FAKE_TMUX_SESSIONS=plainR-main deltaL-main" FLEET_EXIT_TIMEOUT=1 FLEET_HANDOFF_TIMEOUT=5)
+mvst() { printf '{"state":"%s","ts":%s}' "$1" "$(date +%s)" > "$T/state/deltaL-main.json"; }
+
+mvst running
+assert_contains "move refuses while the agent is working" "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "the agent is working"
+mvst blocked
+assert_contains "  ...or waiting on you"                  "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "waiting on you"
+rm -f "$T/state/deltaL-main.json"
+echo x > "$T/root/deltaL/d.txt"
+assert_contains "  ...with uncommitted changes"           "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "uncommitted changes"
+git -C "$T/root/deltaL" checkout -q -- d.txt
+git -C "$T/root/deltaL" commit -q --allow-empty -m local
+assert_contains "  ...with commits not pushed"            "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "1 commit(s) not pushed"
+git -C "$T/root/deltaL" reset -q --hard HEAD~1
+git -C "$T/root/deltaL" checkout -q -b feature/np
+assert_contains "  ...on a branch never pushed"           "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "feature/np was never pushed"
+git -C "$T/root/deltaL" checkout -q feature/d; git -C "$T/root/deltaL" branch -q -D feature/np
+
+TJ=$(renv "${MV[@]}" FLEET_HOSTS="laptop studio dead nofleet" -- move --targets laptop deltaL-main --json)
+assert_eq "--targets: movable once clean and pushed"      "$(printf '%s' "$TJ" | jq -r '"\(.movable) [\(.why)]"')" "true []"
+assert_eq "  ...source carries what move needs"           "$(printf '%s' "$TJ" | jq -r '.source | "\(.project) \(.name) \(.branch) \(.worktree) \(.subject)"')" "deltaL main feature/d false delta work"
+assert_eq "  ...studio's clone under another name, same origin, qualifies" "$(printf '%s' "$TJ" | jq -r '.targets[] | select(.host=="studio") | "\(.ok) \(.project)"')" "true deltaS"
+assert_eq "  ...the source host is not a target"          "$(printf '%s' "$TJ" | jq -r '[.targets[] | select(.host=="laptop")] | length')" "0"
+assert_contains "  ...a dead host is listed as not ok, with why" "$(printf '%s' "$TJ" | jq -r '.targets[] | select(.host=="dead") | "\(.ok) \(.why)"')" "false ssh failed"
+assert_contains "  ...so is one without fleet"            "$(printf '%s' "$TJ" | jq -r '.targets[] | select(.host=="nofleet") | "\(.ok) \(.why)"')" "false fleet not installed"
+assert_contains "--targets table names the target and its clone" "$(renv "${MV[@]}" -- move --targets laptop deltaL-main)" "deltaS"
+
+echo z > "$T/rootR/deltaS/f"
+assert_eq "a target clone with uncommitted changes on another branch does not qualify" \
+  "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r '.targets[0].why')" "its clone has uncommitted changes on main"
+git -C "$T/rootR/deltaS" checkout -q -- f
+printf '%s\ndeltaS\n' "$T/rootR/deltaS" > "$RH/.local/state/fleet/sessions/deltaS-busy"
+assert_eq "  ...nor one with a live session in it on another branch" \
+  "$(renv "${MV[@]}" "FAKE_TMUX_SESSIONS=plainR-main deltaL-main deltaS-busy" -- move --targets laptop deltaL-main --json | jq -r '.targets[0].why')" "deltaS-busy works in its clone, on main"
+rm -f "$RH/.local/state/fleet/sessions/deltaS-busy"
+assert_eq "  ...nor one already running a session of that name" \
+  "$(renv "${MV[@]}" "FAKE_TMUX_SESSIONS=plainR-main deltaL-main deltaS-main" -- move --targets laptop deltaL-main --json | jq -r '.targets[0].why')" "deltaS-main is already running here"
+assert_eq "--check: no clone of the repo"                 "$(run move --check nosuch "$T/origins/nothere.git" main main false | jq -c .)" '{"ok":false,"project":"","why":"no clone of this repo under FLEET_ROOT"}'
+assert_eq "--check: a same-named folder of another repo is not used; the clone with that origin is" \
+  "$(run move --check plain "$T/origins/delta.git" main feature/d false | jq -r .project)" "deltaL"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

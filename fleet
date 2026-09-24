@@ -37,6 +37,7 @@ FLEET_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/fleet/config"
 : "${FLEET_SSH_TIMEOUT:=3}"                        # ssh connect timeout, seconds
 : "${FLEET_CMD_TIMEOUT:=10}"                       # whole remote `fleet status`, seconds
 : "${FLEET_EXIT_TIMEOUT:=10}"                      # kill: how long the agent gets to /exit, seconds
+: "${FLEET_HANDOFF_TIMEOUT:=180}"                  # move: how long the agent gets to write its handoff note, seconds
 : "${FLEET_CHECKOUT:=$HOME/Developer/fleet}"       # where `install` clones the repo
 : "${FLEET_REPO:=CrunchyBagel/fleet}"                   # gh owner/name of this repo
 : "${FLEET_CLAUDE_ARGS:=--permission-mode auto --remote-control}"   # how `fleet new` starts claude
@@ -932,6 +933,127 @@ kill_local() {   # $1 session
     [ -n "$repo" ] && [ "$(realdir "$dir")" = "$(realdir "$repo")" ] && rm -f "$f"
   fi
   printf 'ended %s\n' "$s"
+}
+
+# ---------------------------------------------------------------- move
+#
+# fleet move: a session goes to another Mac. Only work that is committed and
+# pushed moves (git is the transport); the agent there starts with a handoff
+# note from the one here. Hidden parts, each run on the Mac it concerns:
+#   move --check  on each candidate: can it take the session?
+#   move --ask    on the source: ask the agent for its handoff note
+#   move --local  on the target: checkout at origin/<branch>, start the session
+
+# record_json <host> <session>: that fleet session's record, one JSON line.
+record_json() {
+  local h="$1" sess="$2" tmp rec why=""
+  case " $FLEET_HOSTS " in *" $h "*) ;; *) die "unknown host '$h'. hosts:$(hosts_line)" ;; esac
+  tmp=$(mktemp -d)
+  host_status "$h" "$tmp" ""
+  rec=$(jq -c --arg s "$sess" 'first(.[] | select(.session == $s)) // empty' "$tmp/$h.json" 2>/dev/null || true)
+  [ ! -e "$tmp/$h.down" ] || why=$(cat "$tmp/$h.down")
+  rm -rf "$tmp"
+  if [ -z "$rec" ]; then
+    [ -z "$why" ] || die "$h: $why"
+    die "no session '$sess' on $h   (fleet ls $h)"
+  fi
+  printf '%s\n' "$rec"
+}
+
+# move_refusal <record json>: why that session can not move yet, or nothing.
+# The Mac app's Session.moveBlocker says the same, in the same order.
+move_refusal() {
+  printf '%s' "$1" | jq -r '
+    if   .state == "running"     then "the agent is working; move it once it is done"
+    elif .state == "blocked"     then "the agent is waiting on you; answer it first"
+    elif .branch == "(detached)" then "detached HEAD: there is no branch to move"
+    elif .dirty                  then "uncommitted changes; commit and push them first"
+    elif .upstream == ""         then "\(.branch) was never pushed"
+    elif .ahead > 0              then "\(.ahead) commit(s) not pushed"
+    else empty end'
+}
+
+move_verdict() { jq -nc --argjson ok "$1" --arg project "$2" --arg why "$3" '{ok: $ok, project: $project, why: $why}'; }
+
+# fleet move --check <project> <remote> <name> <branch> <worktree>: can this
+# Mac take that session? The clone is the project of that name when its
+# origin is the same repo, else the one clone with that origin. A session in
+# the repo itself needs the clone free to switch branch: no uncommitted
+# changes and no live session in it, unless it is on that branch already.
+move_check() {
+  local project="${1:-}" remote="${2:-}" name="${3:-}" branch="${4:-}" worktree="${5:-}" repo="" cur s
+  [ -n "$worktree" ] || die "usage: fleet move --check <project> <remote> <name> <branch> <worktree>"
+  if [ -n "$remote" ] && repo=$(project_repo "$project") \
+     && [ "$(repo_key "$(git -C "$repo" remote get-url origin 2>/dev/null || true)")" = "$(repo_key "$remote")" ]; then :
+  elif [ -n "$remote" ] && project=$(project_for_remote "$remote"); then repo=$(project_repo "$project")
+  else move_verdict false "" "no clone of this repo under FLEET_ROOT"; return 0; fi
+  s=$(session_name "$project" "$name")
+  if tmux has-session -t "$s" 2>/dev/null; then move_verdict false "$project" "$s is already running here"; return 0; fi
+  if [ "$worktree" != true ]; then
+    cur=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$cur" != "$branch" ]; then
+      if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        move_verdict false "$project" "its clone has uncommitted changes on $cur"; return 0
+      fi
+      for s in $(sessions_in "$repo"); do
+        if tmux has-session -t "$s" 2>/dev/null; then move_verdict false "$project" "$s works in its clone, on $cur"; return 0; fi
+      done
+    fi
+  fi
+  move_verdict true "$project" ""
+}
+# host_fetch hands a local function its arguments as one string; for move
+# --check that string is words quoted by jq's @sh in move_targets_json only.
+move_check_self() { eval "set -- $1"; move_check "$@"; }
+move_fetch() { host_fetch "$1" "$2" move_check_self "fleet move --check" "$3" '{}'; }
+
+# move_targets_json <host> <session>: whether the session can move and which
+# other Macs can take it, asking them all at once.
+move_targets_json() {
+  local src="$1" sess="$2" rec why others="" h tmp args
+  rec=$(record_json "$src" "$sess") || exit 1
+  why=$(move_refusal "$rec")
+  for h in $FLEET_HOSTS; do [ "$h" = "$src" ] || others="$others $h"; done
+  others="${others# }"
+  args=$(printf '%s' "$rec" | jq -r '[.project, .remote, .name, .branch, (.worktree | tostring)] | @sh')
+  tmp=$(mktemp -d)
+  [ -z "$others" ] || FLEET_HOSTS="$others" gather_into "$tmp" "$args" move_fetch
+  for h in $others; do
+    if [ -e "$tmp/$h.down" ]; then
+      jq -nc --arg host "$h" --arg why "$(cat "$tmp/$h.down")" '{host: $host, project: "", ok: false, why: $why}'
+    else
+      jq -c --arg host "$h" '{host: $host, project: (.project // ""), ok: (.ok == true),
+        why: (if .ok == true then "" else (.why // "" | if . == "" then "no answer (is fleet up to date there?)" else . end) end)}' "$tmp/$h.json"
+    fi
+  done | jq -sc --argjson rec "$rec" --arg why "$why" '
+    {source: ($rec | {host, session, project, name, branch, worktree, remote, subject}),
+     movable: ($why == ""), why: $why, targets: .}'
+  rm -rf "$tmp"
+}
+
+# fleet move --targets <host> <session> [--json]
+move_targets() {
+  local json=0 a rest=() tj
+  for a in "$@"; do case "$a" in --json) json=1 ;; *) rest+=("$a") ;; esac; done
+  set -- ${rest[@]+"${rest[@]}"}
+  [ $# -ge 2 ] || die "usage: fleet move --targets <host> <session> [--json]"
+  tj=$(move_targets_json "$1" "$2") || exit 1
+  if [ "$json" = 1 ]; then printf '%s\n' "$tj"; return 0; fi
+  printf '%s' "$tj" | jq -r '"\(.source.session) on \(.source.host): " + (if .movable then "can move" else "can not move yet: \(.why)" end)'
+  printf '%s' "$tj" | jq -r '.targets[] | [.host, (if .project == "" then "-" else .project end), (if .ok then "ok" else .why end), (.ok | tostring)] | @tsv' \
+    | while IFS=$'\t' read -r h p w ok; do
+        if [ "$ok" = true ]; then printf '  %s  %s  %s\n' "$(pad "$h" 14)" "$(pad "$p" 24)" "$w"
+        else printf '  %s%s  %s  %s%s\n' "$DIM" "$(pad "$h" 14)" "$(pad "$p" 24)" "$w" "$RESET"; fi
+      done
+}
+
+# fleet move [-y] [--no-attach] [--model <m>] <host> <session> [target]
+cmd_move() {
+  case "${1:-}" in
+    --check)   shift; move_check "$@"; return 0 ;;
+    --targets) shift; move_targets "$@"; return 0 ;;
+  esac
+  die "usage: fleet move [-y] [--no-attach] [--model <m>] <host> <session> [target]"
 }
 
 # ---------------------------------------------------------------- projects
@@ -2395,6 +2517,7 @@ FLEET_SIM="iPhone 17 Pro"               # Xcode prewarm destination
 # FLEET_SSH_TIMEOUT=3                   # ssh connect timeout
 # FLEET_CMD_TIMEOUT=20                  # whole remote `fleet status`
 # FLEET_EXIT_TIMEOUT=10                 # fleet kill: seconds the agent gets to /exit before tmux is killed
+# FLEET_HANDOFF_TIMEOUT=180             # fleet move: seconds the agent gets to write its handoff note
 # FLEET_TERM=inline                    # inline (attach in this terminal), or ghostty | terminal | iterm:
 #                                      # raise that app's window for the session, else open a new one
 # FLEET_CLAUDE_ARGS="--permission-mode auto --remote-control"   # flags fleet new passes to claude
@@ -2766,6 +2889,11 @@ fleet - Claude Code agent worktrees across your Macs
   fleet shell  [host] [dir]       a login shell on that Mac (in dir), here or in a FLEET_TERM window
   fleet kill [-y] <host> <session>
                                   end a session: its tmux session and the agent in it (-y: no prompt)
+  fleet move [-y] [--no-attach] <host> <session> [target]
+                                  move a session to another Mac: committed and pushed work only;
+                                  the agent writes a handoff note, the new session starts with it
+  fleet move --targets <host> <session> [--json]
+                                  which Macs can take that session, and why not
   fleet new [host] [project] [task] [--all] [--no-attach] [--model <m>]
                                   pick a folder on that host (default: here) and start a session in
                                   it; a name adds a session there, or a worktree once converted;
@@ -2811,6 +2939,7 @@ case "$cmd" in
   open|o)   cmd_open "$@" ;;
   shell)    cmd_shell "$@" ;;
   kill|stop) cmd_kill "$@" ;;
+  move|mv)  cmd_move "$@" ;;
   new|n)    cmd_new "$@" ;;
   projects|p) cmd_projects "$@" ;;
   models)   cmd_models "$@" ;;
