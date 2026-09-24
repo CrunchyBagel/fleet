@@ -134,6 +134,12 @@ reltime() {
 # the name we look up is the name tmux (and therefore `fleet hook`) uses.
 session_name() { printf '%s' "$1-$2" | tr '.:' '__'; }
 
+# jq: what a blocked agent's state file says it waits for. A file from
+# before the hook kept waiting_for still tells: for idle_prompt the hook sets
+# the note to the agent's last reply, which a real question never equals.
+# shellcheck disable=SC2016  # jq code, not shell
+WAITING_FOR='def waiting_for: .waiting_for // (if .state == "blocked" and (.said // "") != "" and .note == .said then "idle_prompt" else "" end); '
+
 # Sessions fleet itself started: one file per tmux session name under
 # $FLEET_STATE/sessions, written by `fleet new`. `fleet ls` shows only these.
 # A session in a plain clone is forgotten once its tmux session is gone; a
@@ -357,8 +363,8 @@ status_project() {
           --argjson ahead "${ahead:-0}" --argjson behind "${behind:-0}" --argjson managed "$managed" \
           --argjson activity "${activity:-0}" --argjson worktree "$in_wt" --arg af "$af" --arg remote "$remote" \
           --arg claude_session "$claude_session" --argjson h "$hookjson" --argjson st "$stats" \
-          '$ARGS.named | .attached_from = (.af | split(" ") | map(select(. != ""))) | del(.af)
-           | .prompt = ($h.prompt // "" | if test("^\\s*<[a-z-]+[ >]") then "" else . end) | .note = ($h.note // "") | .said = ($h.said // "") | .waiting_for = ($h.waiting_for // "")
+          "$WAITING_FOR"'$ARGS.named | .attached_from = (.af | split(" ") | map(select(. != ""))) | del(.af)
+           | .prompt = ($h.prompt // "" | if test("^\\s*<[a-z-]+[ >]") then "" else . end) | .note = ($h.note // "") | .said = ($h.said // "") | .waiting_for = ($h | waiting_for)
            | .model = ($st.model // "") | .context_pct = ($st.context_pct // -1) | .cost_usd = ($st.cost_usd // 0)
            | .limit_5h = ($st.limit_5h // -1) | .limit_5h_reset = ($st.limit_5h_reset // 0)
            | .limit_7d = ($st.limit_7d // -1) | .limit_7d_reset = ($st.limit_7d_reset // 0)
@@ -1094,7 +1100,7 @@ move_ask() {
   case "$(pane_command "$s")" in ""|sh|bash|zsh|fish|tmux) return 0 ;; esac
   f="$FLEET_STATE/$s.json"; pending="$FLEET_STATE/$s.handoff-pending"
   # This Mac's state file is fresher than the record move checked over ssh.
-  case "$(jq -r '"\(.state // "") \(.waiting_for // "")"' "$f" 2>/dev/null || true)" in
+  case "$(jq -r "$WAITING_FOR"' "\(.state // "") \(waiting_for)"' "$f" 2>/dev/null || true)" in
     "running "*)           die "the agent in $s is working; move it once it is done" ;;
     "blocked idle_prompt") ;;                   # its turn is over: waiting for a message is idle
     "blocked "*)           die "the agent in $s is waiting on you; answer it first" ;;

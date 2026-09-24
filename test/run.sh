@@ -1010,6 +1010,11 @@ section "move: waiting for input is idle"
 printf '{"state":"blocked","waiting_for":"idle_prompt","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
 assert_eq "an agent waiting for your next message can move" \
   "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r '"\(.movable) [\(.why)]"')" "true []"
+printf '{"state":"blocked","note":"Done, pushed.","said":"Done, pushed.","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
+assert_eq "  ...also from a state file written before waiting_for (its note is its reply)" \
+  "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .movable)" "true"
+printf '{"state":"blocked","note":"Claude needs your permission to use Bash","said":"Done, pushed.","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
+assert_eq "  ...but not when that note is a question"   "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .movable)" "false"
 printf '{"state":"blocked","waiting_for":"permission_prompt","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
 assert_contains "  ...one waiting for a permission can not" "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r .why)" "waiting on you"
 printf '{"state":"blocked","waiting_for":"idle_prompt","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"

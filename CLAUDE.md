@@ -294,7 +294,7 @@ whoever runs it.
   | prompt   | string | UserPromptSubmit's text (`user_input`/`prompt`), clipped to 400: what the agent is working on; `""` if none |
   | note     | string | while blocked: for `idle_prompt` what the agent last said (the actual question; Claude Code's "waiting for your input" also fires while a background task runs, which hooks cannot see), else the Notification's `message`, else a phrase for its `notification_type`; `""` otherwise |
   | said     | string | Stop's `last_assistant_message`, clipped to 800; kept until the next running event; `""` otherwise. A tag-shaped prompt (`<task-notification>`, Claude Code talking to itself) is never recorded or emitted |
-  | waiting_for | string | while blocked, the Notification's `notification_type`: `idle_prompt` = its turn is over and it waits for your next message (movable), anything else = a real question; `""` otherwise |
+  | waiting_for | string | while blocked, the Notification's `notification_type`: `idle_prompt` = its turn is over and it waits for your next message (movable), anything else = a real question; `""` otherwise. A state file from before this key counts as `idle_prompt` when its note equals its said (`WAITING_FOR`) |
   | model    | string | status line `model.display_name`; `""` without a snapshot |
   | context_pct | int | status line `context_window.used_percentage`; -1 unknown |
   | cost_usd | number | status line `cost.total_cost_usd`; 0 unknown |
