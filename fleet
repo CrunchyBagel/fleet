@@ -1568,6 +1568,31 @@ brand_session() {
   tmux set-option -q -t "$1" set-titles-string "#S · $2 · fleet" 2>/dev/null || true
 }
 
+# start_session <session> <dir> <project> [model] [first-prompt file]: the
+# tmux session in <dir> with claude typed into it (an existing session is
+# reused as it is), branded and registered. With a file, claude's first
+# prompt is its text, read by the pane's shell and removed as it is read, so
+# a long note never passes through send-keys.
+start_session() {
+  local session="$1" dir="$2" project="$3" model="${4:-}" first="${5:-}" prompt=""
+  [ -z "$first" ] || prompt=" \"\$(cat $(shq "$first"); rm -f $(shq "$first"))\""
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    # A shell with claude typed into it, not `claude` as the session command,
+    # so the session (and the `attached` fallback state) outlives the agent.
+    tmux new-session -d -s "$session" -c "$dir"
+    # Named <machine>-<tmux session>: the Claude apps list every machine's
+    # sessions together and two Macs can both have a Project-main. Only this
+    # label carries the machine; the tmux session and fleet's records do not.
+    # --remote-control makes it reachable from claude.ai/code and the mobile
+    # app, --permission-mode auto starts it in auto mode. FLEET_CLAUDE_ARGS in
+    # the config changes the flags per machine. --model only when asked
+    # (fleet new --model), so Claude Code's own default applies otherwise.
+    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS${model:+ --model $(shq "$model")}$prompt" Enter
+  fi
+  brand_session "$session" "$FLEET_SELF"
+  register_session "$session" "$dir" "$project"
+}
+
 # Start (or re-use) a session on THIS machine. Prints the directory the
 # session runs in and nothing else on stdout, because the remote form of
 # `fleet new` reads it back over ssh.
@@ -1601,21 +1626,7 @@ new_local() {
       fi
     fi
   fi
-  if ! tmux has-session -t "$session" 2>/dev/null; then
-    # A shell with claude typed into it, not `claude` as the session command,
-    # so the session (and the `attached` fallback state) outlives the agent.
-    tmux new-session -d -s "$session" -c "$dir"
-    # Named <machine>-<tmux session>: the Claude apps list every machine's
-    # sessions together and two Macs can both have a Project-main. Only this
-    # label carries the machine; the tmux session and fleet's records do not.
-    # --remote-control makes it reachable from claude.ai/code and the mobile
-    # app, --permission-mode auto starts it in auto mode. FLEET_CLAUDE_ARGS in
-    # the config changes the flags per machine. --model only when asked
-    # (fleet new --model), so Claude Code's own default applies otherwise.
-    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS${model:+ --model $(shq "$model")}" Enter
-  fi
-  brand_session "$session" "$FLEET_SELF"
-  register_session "$session" "$dir" "$project"
+  start_session "$session" "$dir" "$project" "$model"
   printf '%s\n' "$dir"
 }
 
@@ -1742,33 +1753,25 @@ prewarm() {
   printf '%s  prewarming %s%s\n' "$DIM" "$scheme" "$RESET"
 }
 
-# fleet open [query] | fleet open <host> <session>
-cmd_open() {
-  local sel
-  if [ $# -ge 2 ]; then sel=$(record_for "$1" "$2" --all) || return 1
-  else sel=$(pick --all "${1:-}") || return 1; fi
-  [ -z "$sel" ] && return 1
-  IFS=$'\t' read -r _ host project name branch session path state worktree remote <<< "$sel"
-  [ "$branch" = "(detached)" ] && die "$project/$name on $host is detached, nothing to pull"
-
-  # The local clone is the directory of the same name, else the one clone
-  # under FLEET_ROOT with the same origin: the same repo can live under
-  # different directory names on different Macs.
-  local mainrepo dir other
-  if ! mainrepo=$(project_repo "$project"); then
-    other=$(project_for_remote "${remote:-}") \
-      || die "no local clone for $project under $FLEET_ROOT${remote:+ (origin $remote)}"
-    printf '%s  no %s here, using %s (same origin)%s\n' "$DIM" "$project" "$other" "$RESET"
-    project="$other"; mainrepo=$(project_repo "$project")
-  fi
+# prepare_checkout <project> <name> <branch> <worktree> [strict]: put this
+# Mac's checkout of a session's branch at origin's tip, one dim line per
+# step. <worktree> true = the worktree at worktree_path (made when missing,
+# converting a plain clone first); else the clone itself, switched to
+# <branch> (never with uncommitted changes to tracked files). `open` takes
+# what it can and warns; strict (`move`) dies unless the checkout ends up at
+# origin/<branch>. Sets CHECKOUT_DIR, so call it directly, never in $(...).
+prepare_checkout() {
+  local project="$1" name="$2" branch="$3" worktree="$4" strict="${5:-}" mainrepo dir cur dirty
+  mainrepo=$(project_repo "$project") || die "no clone for $project under $FLEET_ROOT"
   if [ "$worktree" != true ]; then dir="$mainrepo"   # a session in the repo itself
   else enable_worktrees "$mainrepo"; dir=$(worktree_path "$project" "$name"); fi
+  CHECKOUT_DIR="$dir"
 
   printf '%s  fetching origin for %s%s\n' "$DIM" "$project" "$RESET"
   git -C "$mainrepo" fetch origin --prune -q
   git -C "$mainrepo" worktree prune
   if ! git -C "$mainrepo" rev-parse -q --verify "origin/$branch" >/dev/null; then
-    [ -d "$dir" ] || die "origin/$branch not found: not pushed yet, or deleted after merge"
+    { [ -d "$dir" ] && [ -z "$strict" ]; } || die "origin/$branch not found: not pushed yet, or deleted after merge"
     printf '%s  origin/%s not found (not pushed, or deleted after merge), left alone%s\n' \
       "$YELLOW" "$branch" "$RESET"
   elif [ "$worktree" != true ]; then
@@ -1776,7 +1779,7 @@ cmd_open() {
     # Never touch a checkout with uncommitted changes to tracked files.
     # Untracked files ride along, as git checkout itself allows (a collision
     # is git's error, surfaced below). The refusal says what is dirty.
-    local cur dirty; cur=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    cur=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
     if [ "$cur" != "$branch" ]; then
       dirty=$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null | head -5)
       [ -z "$dirty" ] \
@@ -1789,6 +1792,7 @@ $dirty"
     if git -C "$dir" merge --ff-only -q "origin/$branch" 2>/dev/null; then
       printf '%s  %s is at origin/%s (%s)%s\n' "$DIM" "$branch" "$branch" "$(git -C "$dir" log -1 --format=%s 2>/dev/null)" "$RESET"
     else
+      [ -z "$strict" ] || die "local $branch in $dir can't be fast-forwarded to origin/$branch (diverged, or local changes in the way)"
       printf '%s  local %s diverged from origin/%s, left alone%s\n' "$YELLOW" "$branch" "$branch" "$RESET"
     fi
   else
@@ -1800,11 +1804,34 @@ $dirty"
         git -C "$mainrepo" worktree add -q --track -b "$branch" "$dir" "origin/$branch"
       fi
     fi
-    git -C "$dir" merge --ff-only -q "origin/$branch" 2>/dev/null \
-      || printf '%s  local worktree diverged from origin/%s, left alone%s\n' "$YELLOW" "$branch" "$RESET"
+    if ! git -C "$dir" merge --ff-only -q "origin/$branch" 2>/dev/null; then
+      [ -z "$strict" ] || die "the worktree $dir can't be fast-forwarded to origin/$branch (diverged, or local changes in the way)"
+      printf '%s  local worktree diverged from origin/%s, left alone%s\n' "$YELLOW" "$branch" "$RESET"
+    fi
   fi
+}
 
-  open_checkout "$dir"
+# fleet open [query] | fleet open <host> <session>
+cmd_open() {
+  local sel
+  if [ $# -ge 2 ]; then sel=$(record_for "$1" "$2" --all) || return 1
+  else sel=$(pick --all "${1:-}") || return 1; fi
+  [ -z "$sel" ] && return 1
+  IFS=$'\t' read -r _ host project name branch session path state worktree remote <<< "$sel"
+  [ "$branch" = "(detached)" ] && die "$project/$name on $host is detached, nothing to pull"
+
+  # The local clone is the directory of the same name, else the one clone
+  # under FLEET_ROOT with the same origin: the same repo can live under
+  # different directory names on different Macs.
+  local other
+  if ! project_repo "$project" >/dev/null; then
+    other=$(project_for_remote "${remote:-}") \
+      || die "no local clone for $project under $FLEET_ROOT${remote:+ (origin $remote)}"
+    printf '%s  no %s here, using %s (same origin)%s\n' "$DIM" "$project" "$other" "$RESET"
+    project="$other"
+  fi
+  prepare_checkout "$project" "$name" "$branch" "$worktree"
+  open_checkout "$CHECKOUT_DIR"
 }
 
 # open_checkout <dir>: hand the checkout to whatever FLEET_OPEN says. Xcode
