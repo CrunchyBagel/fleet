@@ -13,6 +13,7 @@ fleet attach [host session]           attach to a session here (tmux prefix+d de
 fleet open   [host session]           pull its branch onto this Mac and open it (see FLEET_OPEN)
 fleet shell  [host] [dir]             a login shell on that Mac
 fleet kill [-y] <host> <session>      end a session: the agent is asked to /exit, then tmux is closed
+fleet move [host session [target]]    move a session to another Mac with a handoff note (pushed work only)
 fleet new [host] [project] [name]     start a session there; a name adds a session, or a worktree
                                       (--model <m>: which Claude model; default: Claude Code's choice)
 fleet projects [host] [--json]        repos under FLEET_ROOT there
@@ -178,6 +179,20 @@ echo ".build/" >> ~/.gitignore_global
 
 and Xcode > Settings > Locations > Derived Data: Custom, Relative to
 Workspace, path `.build`. `fleet doctor` checks both when Xcode is installed.
+
+## Moving a session
+
+`fleet move <host> <session> [target]` hands a session to another Mac, for
+when you started an agent on the desktop and are leaving with the laptop.
+It only moves work that is committed and pushed, and only while the agent
+is not working or waiting on you. The Macs offered are the ones with a
+clone of the same repo (under any folder name) that can switch to the
+branch. The agent writes a handoff note (goal, what is done, what is
+next, open questions); the target checks out the branch at what was
+pushed and starts a new session whose first prompt is that note; only then
+does the old session end. `fleet move --targets <host> <session>` shows
+which Macs qualify and why the others do not. In the Mac app it is the
+Move button on a session.
 
 ## Verify
 

@@ -1,6 +1,6 @@
 # Moving a session to another Mac
 
-Date: 2026-09-24. Status: design approved in conversation, awaiting spec review.
+Date: 2026-09-24. Status: implemented.
 
 ## Goal
 

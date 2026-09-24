@@ -65,8 +65,8 @@ whoever runs it.
   rewritten, so a Mac whose clones live elsewhere needs the line edited),
   FLEET_STATE (`~/.local/state/fleet`), FLEET_BRANCH_PREFIX (`agent/`),
   FLEET_SIM, FLEET_SSH_TIMEOUT (3, connect), FLEET_CMD_TIMEOUT (10, whole remote
-  status), FLEET_PATH (literal `$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:
-  /usr/local/bin`), FLEET_CHECKOUT (`~/Developer/fleet`), FLEET_REPO
+  status), FLEET_HANDOFF_TIMEOUT (180, move's wait for the note), FLEET_PATH
+  (literal `$HOME/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin`), FLEET_CHECKOUT (`~/Developer/fleet`), FLEET_REPO
   (`CrunchyBagel/fleet`, gh owner/name).
 - Security (SECURITY.md is the user-facing version, keep them in step):
   hosts are validated by `valid_host` on add and on load (letters, digits,
@@ -123,7 +123,7 @@ whoever runs it.
   fast-forwarding, opening) as dim lines; the app streams those into the
   session view while the button is busy.
 - Commands: `ls` (default), `attach|a`, `open|o`, `new|n`, `projects|p`,
-  `models`, `claude`, `shell`, `kill|stop`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models`, `claude`, `shell`, `kill|stop`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
   `models [host] [--json]` (`models_local` on the host) = what Claude Code
   there can start with: `{default, models: [{id, name, short_name,
   section}]}` plus `host` in the `--json` form. There is no `claude models`;
@@ -172,6 +172,23 @@ whoever runs it.
   registry entry when the session is in the repo itself (a worktree row
   stays, idle, until `reap`). Without `-y` it asks on a tty and refuses
   otherwise. Only sessions `fleet status` lists can be killed.
+  `move [-y] [--no-attach] [--model m] <host> <session> [target]` moves a
+  fleet session to another Mac (spec
+  `docs/superpowers/specs/2026-09-24-session-move-design.md`). It is refused
+  while `running`/`blocked`, dirty, never pushed or ahead (`move_refusal`,
+  mirrored by the app's `Session.moveBlocker`). Targets are the other hosts
+  with a clone of the same repo (the project of that name when its origin is
+  the same repo, else `project_for_remote`) that can take it: `move --check`
+  there, fanned out through `host_fetch`, answers `{ok, project, why}`;
+  `move --targets [--json]` shows them. Then `move --ask` on the source
+  types `HANDOFF_PROMPT` into the pane and waits up to FLEET_HANDOFF_TIMEOUT
+  for a `done` whose state file has `handoff` (the hook writes it only while
+  `<session>.handoff-pending` exists); no agent in the pane = no note. The
+  record is checked again, then `move --local` on the target gets header +
+  note on stdin: `prepare_checkout … strict` (shared with `open`, which only
+  warns), the note into `<session>.handoff`, and `start_session` (shared
+  with `new`) types `claude … "$(cat f; rm -f f)"`. Only after that does
+  `kill --local` end the source; then it attaches like `new`.
   `hosts info --json` carries `model` (the identifier, `Mac15,8`) and
   `model_name` (`system_profiler`'s "Model Name", `""` if unknown, absent
   from older remotes); the app picks the sidebar symbol from `model_name`.
@@ -240,6 +257,11 @@ whoever runs it.
   app's polling for 12 hours); it records the reason a host counts
   as down (`<host>.down`: ssh failed / fleet not installed / no answer) and
   `ls` prints those reasons.
+- `fleet move --targets <host> <session> --json` (the Mac app's Move menu):
+  `{source: {host, session, project, name, branch, worktree, remote,
+  subject}, movable, why, targets: [{host, project, ok, why}]}`; a down
+  host is a target with `ok: false` and its down reason. `fleet move -y
+  --no-attach …` ends with `<host>\t<session>\t<dir>` like `new`.
 - Record schema (all keys always present):
 
   | key      | type   | meaning                                                  |
@@ -295,6 +317,9 @@ whoever runs it.
   clears note; garbage stdin is treated as `{}`), reading it with a 1s
   timeout so it never blocks. It prints nothing and exits 0: a
   UserPromptSubmit hook's stdout becomes context and exit 2 blocks the prompt.
+  While `$FLEET_STATE/<session>.handoff-pending` exists (fleet move waiting
+  for a note), done also stores the whole `last_assistant_message` as
+  `handoff` (newlines kept, 20000 max); the record never carries it.
 - Status line contract: `install_statusline` makes Claude Code's
   `statusLine.command` `$HOME/bin/fleet statusline -- '<previous command>'`
   (idempotent; `statusline_missing` backs the doctor check). Claude Code
@@ -386,6 +411,14 @@ whoever runs it.
   Update fleet button streaming `fleet install <host>`. The New-session sheet
   says so when the host lists no project at all (FLEET_ROOT wrong there).
   A session's End button (and menu items) confirm, then `fleet kill -y`.
+  A session's Move menu (and "Move To" in its context menu) lists `fleet
+  move --targets` for it, loaded when its screen shows and when its
+  movability changes; it is disabled with the reason when
+  `Session.moveBlocker` says so or no Mac qualifies. Picking a Mac confirms,
+  then `FleetModel.moveSession` streams `fleet move -y --no-attach` into
+  the busy row, selects the new session and attaches it. The context menu
+  without loaded targets offers "Move To…", which selects the session.
+  Not on iOS: a move needs one Mac to drive two others.
   Settings > Hosts edits the list through `fleet hosts add|rm` (add with no
   name = every Mac on the tailnet) and shows the CLI's push results.
 - Files in `app/Fleet/`, one screen or concern each: `FleetApp.swift` (entry,

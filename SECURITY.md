@@ -131,6 +131,15 @@ piece buys an attacker, what fleet does about it, and what only you can do.
   `claude plugin install` without `-y`: a plugin whose marketplace wants to run
   a command is refused and left for you to install by hand.
 
+`fleet move` carries one piece of agent-written text between Macs: the
+handoff note. It travels as the stdin of the ssh command that starts the
+session on the target, is written to `~/.local/state/fleet/<session>.handoff`
+there, and reaches claude as a double-quoted argument (`"$(cat file)"`),
+which the shell does not evaluate further; the file is removed as it is
+read. Nothing new is executed and no new ssh direction exists: the machine
+you run `fleet move` on talks to the source and the target, as `open` and
+`kill` already do.
+
 ## What only you can do
 
 - **Tailscale ACLs.** Allow ssh (port 22) only from your control machines to
