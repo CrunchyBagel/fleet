@@ -512,4 +512,6 @@ whoever runs it.
   open, xed in `test/shims/` (FLEET_PATH points there first; FAKE_TMUX_SESSIONS
   lists the sessions the fake tmux reports alive); `expect` drives reap. Runs
   under /bin/bash 3.2. Run it before every commit; it caught `cmd_hook` having
-  been deleted by an earlier refactor. `install` is not covered (needs gh).
+  been deleted by an earlier refactor. `install` on this machine is not
+  covered (needs gh); `install <host>` is, against the fake host `fresh` (no
+  fleet, a git that fails like Xcode's shim before its license is accepted).

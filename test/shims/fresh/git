@@ -1,0 +1,5 @@
+#!/bin/bash
+# git as a fresh Mac has it: Xcode's shim with the license not yet accepted.
+# Every git command fails this way, so the bootstrap clone of fleet dies.
+echo "You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window to review and agree to the Xcode and Apple SDKs license." >&2
+exit 69

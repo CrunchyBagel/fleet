@@ -9,7 +9,7 @@
 #
 # Two fake hosts: "laptop" is this machine (FLEET_SELF); "studio" is reached
 # through the fake ssh, which runs the same fleet script with its own HOME,
-# config and FLEET_ROOT. "dead", "nofleet" and "slow" fail in specific ways.
+# config and FLEET_ROOT. "dead", "nofleet", "slow" and "fresh" fail in specific ways.
 # Needs: git, jq, expect (all on stock macOS or already required by fleet).
 
 set -uo pipefail
@@ -352,6 +352,19 @@ git -C "$T/fleetwork" push -q 2>/dev/null
 out=$(upd)
 assert_contains "signed tip accepted"              "$out" "is signed by a key"
 assert_eq       "checkout is now at v4"            "$(git -C "$T/fleetco" log -1 --format=%s)" "v4 signed"
+# fleet install <host> on a Mac without fleet: the bootstrap clone there once
+# died silently (its git is Xcode's shim, license unaccepted) because the
+# remote's first output line is dropped as its header. Errors have spaces.
+inst() { env "${FENV[@]}" XDG_CONFIG_HOME="$UC" HOME="$T/uphome" /bin/bash "$T/fleetco/fleet" install "$@" 2>&1; }
+O=$(inst fresh); RC=$?
+assert_contains "remote install shows why the bootstrap failed" "$O" "You have not agreed to the Xcode license"
+assert_contains "  ...as a FAIL with the retry"          "$O" "FAIL  fleet never got installed on fresh"
+assert_eq       "  ...and exits 1"                       "$RC" "1"
+mkdir -p "$T/freshhome/bin"; printf '#!/bin/sh\necho fresh\necho "  ok    pretend"\n' > "$T/freshhome/bin/fleet"; chmod +x "$T/freshhome/bin/fleet"
+O=$(inst fresh)
+assert_eq       "remote install drops the remote's own header" "$(printf '%s\n' "$O" | grep -cx fresh | tr -d ' ')" "1"
+assert_contains "  ...and keeps the rest"                "$O" "ok    pretend"
+assert_lacks    "  ...with no FAIL"                      "$O" "FAIL"
 
 # ---------------------------------------------------------------- doctor, misc
 

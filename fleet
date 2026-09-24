@@ -2585,7 +2585,20 @@ install_remote() {
   # remote's; the repo name is this machine's FLEET_REPO.
   # shellcheck disable=SC2016  # $HOME is for the remote shell to expand
   cmd='if command -v fleet >/dev/null 2>&1; then fleet install --local; else { if command -v gh >/dev/null 2>&1; then gh repo clone '"'$FLEET_REPO'"' "$HOME/Developer/fleet" -- -q; else git clone -q '"'https://github.com/$FLEET_REPO'"' "$HOME/Developer/fleet"; fi; } && "$HOME/Developer/fleet/fleet" install --local; fi'
-  ssh -o BatchMode=yes "$h" "$(with_path "$cmd")" 2>&1 | sed '1d' || DOCTOR_RC=1
+  # When the remote's install ran, its first line is its own header (its
+  # FLEET_SELF, one word) and is dropped. When the bootstrap died before
+  # that, the first line is git's or gh's error, which has spaces: keep it,
+  # and say so, since that install printed nothing at all once (a fresh Mac
+  # whose Xcode license was not yet accepted, so its git refused to run).
+  if ssh -o BatchMode=yes "$h" "$(with_path "$cmd")" 2>&1 \
+     | awk 'NR == 1 { if ($0 !~ / /) next; bad = 1 } { print } END { if (NR == 0 || bad) exit 3 }'
+  then :
+  else
+    case $? in
+      3) fail "fleet never got installed on $h" "fix what $h printed above, then: fleet install $h" ;;
+      *) DOCTOR_RC=1 ;;    # it ran and reported its own FAIL lines
+    esac
+  fi
 }
 
 cmd_install() {
