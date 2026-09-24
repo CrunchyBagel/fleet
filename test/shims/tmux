@@ -14,11 +14,14 @@ case "${1:-}" in
     # blocked: the agent asks for permission instead.
     case "$*" in *"handoff note"*)
       if [ "${FAKE_TMUX_ANSWER:-}" = blocked ]; then
-        printf '{"state":"blocked","ts":%s}' "$(date +%s)" > "$FLEET_STATE/$3.json"
+        jq -n --arg p "${5:-}" --argjson ts "$(date +%s)" '{state: "blocked", ts: $ts, prompt: $p[:400]}' > "$FLEET_STATE/$3.json"
       elif [ -n "${FAKE_TMUX_ANSWER:-}" ]; then
         [ -z "${FAKE_TMUX_ANSWER_RUN:-}" ] || sh -c "$FAKE_TMUX_ANSWER_RUN"
-        jq -n --rawfile h "$FAKE_TMUX_ANSWER" --argjson ts "$(date +%s)" \
-          '{state: "done", ts: $ts, said: $h[:800], handoff: $h}' > "$FLEET_STATE/$3.json"
+        # The hook recorded the typed request as the turn's prompt, unless
+        # FAKE_TMUX_ANSWER_STALE: a turn that answered something else.
+        p="${5:-}"; [ -z "${FAKE_TMUX_ANSWER_STALE:-}" ] || p="something else"
+        jq -n --rawfile h "$FAKE_TMUX_ANSWER" --arg p "${p:0:400}" --argjson ts "$(date +%s)" \
+          '{state: "done", ts: $ts, prompt: $p, said: $h[:800], handoff: $h}' > "$FLEET_STATE/$3.json"
       fi ;;
     esac ;;
 esac

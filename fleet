@@ -984,7 +984,7 @@ move_verdict() { jq -nc --argjson ok "$1" --arg project "$2" --arg why "$3" '{ok
 # the repo itself needs the clone free to switch branch: no uncommitted
 # changes and no live session in it, unless it is on that branch already.
 move_check() {
-  local project="${1:-}" remote="${2:-}" name="${3:-}" branch="${4:-}" worktree="${5:-}" repo="" cur s
+  local project="${1:-}" remote="${2:-}" name="${3:-}" branch="${4:-}" worktree="${5:-}" repo="" dir cur s n
   [ -n "$worktree" ] || die "usage: fleet move --check <project> <remote> <name> <branch> <worktree>"
   if [ -n "$remote" ] && repo=$(project_repo "$project") \
      && [ "$(repo_key "$(git -C "$repo" remote get-url origin 2>/dev/null || true)")" = "$(repo_key "$remote")" ]; then :
@@ -992,10 +992,24 @@ move_check() {
   else move_verdict false "" "no clone of this repo under FLEET_ROOT"; return 0; fi
   s=$(session_name "$project" "$name")
   if tmux has-session -t "$s" 2>/dev/null; then move_verdict false "$project" "$s is already running here"; return 0; fi
-  if [ "$worktree" != true ]; then
-    cur=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-    if [ "$cur" != "$branch" ]; then
-      if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  # The checkout the session would run in, when it exists: on the branch it
+  # must be exactly origin's (move --local refuses anything else); a
+  # worktree must be on the branch at all.
+  if [ "$worktree" = true ]; then dir=$(worktree_path "$project" "$name"); else dir="$repo"; fi
+  if [ -d "$dir" ]; then
+    cur=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$cur" = "$branch" ]; then
+      if [ -n "$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        move_verdict false "$project" "its checkout of $branch has uncommitted changes"; return 0
+      fi
+      n=$(git -C "$dir" rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)
+      if [ "$n" != 0 ]; then move_verdict false "$project" "its $branch has $n commit(s) not on origin"; return 0; fi
+    elif [ "$worktree" = true ]; then
+      move_verdict false "$project" "its worktree $name is on $cur"; return 0
+    else
+      # A session in the repo itself needs the clone free to switch branch:
+      # no uncommitted changes and no live session in it.
+      if [ -n "$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
         move_verdict false "$project" "its clone has uncommitted changes on $cur"; return 0
       fi
       for s in $(sessions_in "$repo"); do
@@ -1057,23 +1071,41 @@ move_targets() {
 # it was, when no note comes within FLEET_HANDOFF_TIMEOUT or the agent asks
 # for something instead.
 move_ask() {
-  local s="${1:-}" f pending t0 i=0 st note=""
+  local s="${1:-}" f pending owner t0 i=0 st note=""
   [ -n "$s" ] || die "usage: fleet move --ask <session>"
   tmux has-session -t "$s" 2>/dev/null || return 0
   case "$(pane_command "$s")" in ""|sh|bash|zsh|fish|tmux) return 0 ;; esac
   f="$FLEET_STATE/$s.json"; pending="$FLEET_STATE/$s.handoff-pending"
-  mkdir -p "$FLEET_STATE"; : > "$pending"
+  # This Mac's state file is fresher than the record move checked over ssh.
+  case "$(jq -r '.state // ""' "$f" 2>/dev/null || true)" in
+    running) die "the agent in $s is working; move it once it is done" ;;
+    blocked) die "the agent in $s is waiting on you; answer it first" ;;
+  esac
+  # The marker holds the pid of the move waiting on it: an interrupted move's
+  # --ask can outlive its ssh, and must neither be joined nor have its marker
+  # removed by the next one. A dead pid (a crash) is taken over.
+  if [ -e "$pending" ]; then
+    owner=$(cat "$pending" 2>/dev/null || true)
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+      die "another fleet move of $s is already waiting for its handoff note"
+    fi
+  fi
+  mkdir -p "$FLEET_STATE"; echo "$$" > "$pending"
   # shellcheck disable=SC2064  # expanded now: $pending is local, gone by the time the trap runs
-  trap "rm -f $(shq "$pending")" EXIT
+  trap "if [ \"\$(cat $(shq "$pending") 2>/dev/null)\" = $$ ]; then rm -f $(shq "$pending"); fi" EXIT
   t0=$(date +%s)
   tmux send-keys -t "$s" C-u 2>/dev/null || true
   tmux send-keys -t "$s" -l "$HANDOFF_PROMPT" 2>/dev/null || die "could not type into $s"
+  sleep 0.3                                   # typed text can read as a paste, which would swallow an Enter sent with it
   tmux send-keys -t "$s" Enter 2>/dev/null || true
   while [ "$i" -lt "$FLEET_HANDOFF_TIMEOUT" ]; do
     sleep 1; i=$((i + 1))
-    st=$(jq -r --argjson t0 "$t0" 'select(.ts >= $t0) | .state' "$f" 2>/dev/null || true)
+    # Only the done of the turn our request started: the hook keeps that
+    # turn's prompt, and a reply to anything else is not a handoff note.
+    st=$(jq -r --argjson t0 "$t0" --arg p "${HANDOFF_PROMPT:0:60}" \
+           'select(.ts >= $t0 and ((.prompt // "") | startswith($p))) | .state' "$f" 2>/dev/null || true)
     case "$st" in
-      done)    note=$(jq -r '.handoff // .said // ""' "$f" 2>/dev/null || true); [ -z "$note" ] || break ;;
+      done)    note=$(jq -r '.handoff // ""' "$f" 2>/dev/null || true); [ -z "$note" ] || break ;;
       blocked) die "the agent in $s asked for something instead of writing the note; answer it there, then move again" ;;
     esac
   done
@@ -1828,7 +1860,9 @@ brand_session() {
 # a long note never passes through send-keys.
 start_session() {
   local session="$1" dir="$2" project="$3" model="${4:-}" first="${5:-}" prompt=""
-  [ -z "$first" ] || prompt=" \"\$(cat $(shq "$first"); rm -f $(shq "$first"))\""
+  # `--` first: FLEET_CLAUDE_ARGS may end in an option whose value is optional
+  # (--remote-control [name]), which would take the prompt as that value.
+  [ -z "$first" ] || prompt=" -- \"\$(cat $(shq "$first"); rm -f $(shq "$first"))\""
   if ! tmux has-session -t "$session" 2>/dev/null; then
     # A shell with claude typed into it, not `claude` as the session command,
     # so the session (and the `attached` fallback state) outlives the agent.
@@ -2061,6 +2095,16 @@ $dirty"
       [ -z "$strict" ] || die "the worktree $dir can't be fast-forwarded to origin/$branch (diverged, or local changes in the way)"
       printf '%s  local worktree diverged from origin/%s, left alone%s\n' "$YELLOW" "$branch" "$RESET"
     fi
+  fi
+  # strict: exactly what origin has, on that branch, nothing uncommitted.
+  # merge --ff-only also succeeds for a branch ahead of origin.
+  if [ -n "$strict" ]; then
+    cur=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    [ "$cur" = "$branch" ] || die "$dir is on '$cur', not '$branch'"
+    [ "$(git -C "$dir" rev-parse HEAD)" = "$(git -C "$mainrepo" rev-parse "origin/$branch")" ] \
+      || die "$dir is not at origin/$branch: it has commits origin does not"
+    [ -z "$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+      || die "$dir has uncommitted changes on $branch"
   fi
 }
 

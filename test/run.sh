@@ -915,7 +915,7 @@ assert_eq "  ...studio's clone is on the branch"          "$(git -C "$T/rootR/de
 assert_eq "  ...at what laptop pushed"                    "$(git -C "$T/rootR/deltaS" rev-parse HEAD)" "$(git -C "$T/root/deltaL" rev-parse HEAD)"
 assert_contains "  ...the first prompt says where it came from" "$(cat "$H")" "moved from laptop to studio by fleet. Branch feature/d, last commit: delta work."
 assert_contains "  ...and carries the note byte for byte" "$(cat "$H")" "$(cat "$T/note.txt")"
-assert_contains "  ...claude there reads it as its first prompt" "$(cat "$SHIM_LOG")" "--remote-control \"\$(cat '$H'; rm -f '$H')\" Enter"
+assert_contains "  ...claude there reads it as its first prompt" "$(cat "$SHIM_LOG")" "--remote-control -- \"\$(cat '$H'; rm -f '$H')\" Enter"
 assert_true "  ...the new session is registered on studio" test -e "$RH/.local/state/fleet/sessions/deltaS-main"
 assert_eq "  ...the source ends only after the target started" \
   "$(grep -o 'new-session -d -s deltaS-main\|kill-session -t deltaL-main' "$SHIM_LOG" | tr '\n' '|')" "new-session -d -s deltaS-main|kill-session -t deltaL-main|"
@@ -962,6 +962,46 @@ assert_eq "studio to laptop: exit 0"                      "$RC" "0"
 assert_eq "  ...laptop's clone is on the branch"          "$(git -C "$T/root/deltaL" rev-parse --abbrev-ref HEAD)" "feature/d"
 assert_eq "  ...the new session is laptop's deltaL-main"  "$(printf '%s\n' "$O" | tail -1 | cut -f1,2)" "$(printf 'laptop\tdeltaL-main')"
 assert_contains "  ...its first prompt came over stdin"   "$(cat "$T/state/deltaL-main.handoff")" "moved from studio to laptop by fleet"
+
+section "move: review fixes"
+MK="$T/state/deltaL-main.handoff-pending"
+printf '{"state":"running","ts":%s}' "$(date +%s)" > "$T/state/deltaL-main.json"
+: > "$SHIM_LOG"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" -- move --ask deltaL-main 2>&1)
+assert_contains "--ask refuses when the agent here turns out to be working" "$O" "the agent in deltaL-main is working"
+assert_lacks "  ...and types nothing"                    "$(cat "$SHIM_LOG")" "send-keys"
+rm -f "$T/state/deltaL-main.json"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" FAKE_TMUX_ANSWER_STALE=1 FLEET_HANDOFF_TIMEOUT=2 -- move --ask deltaL-main 2>&1)
+assert_contains "--ask ignores a done that answers something else" "$O" "no handoff note from deltaL-main"
+rm -f "$T/state/deltaL-main.json"
+sleep 30 & LIVE=$!
+echo "$LIVE" > "$MK"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" -- move --ask deltaL-main 2>&1)
+assert_contains "--ask refuses while another move of the session waits" "$O" "already waiting for its handoff note"
+assert_eq "  ...and leaves that move's marker alone"  "$(cat "$MK" 2>/dev/null)" "$LIVE"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+echo 999999 > "$MK"
+O=$(renv "${MV[@]}" FAKE_TMUX_COMMAND=claude FAKE_TMUX_ANSWER="$T/note.txt" -- move --ask deltaL-main 2>&1)
+assert_eq "  ...but a stale marker is taken over"     "$O" "$(cat "$T/note.txt")"
+assert_false "  ...and removed afterwards"             test -e "$MK"
+rm -f "$T/state/deltaL-main.json"
+
+git -C "$T/rootR/deltaS" checkout -q feature/d
+git -C "$T/rootR/deltaS" commit -q --allow-empty -m "studio only"
+assert_eq "a target already on the branch with commits origin lacks does not qualify" \
+  "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r '.targets[0].why')" "its feature/d has 1 commit(s) not on origin"
+git -C "$T/rootR/deltaS" reset -q --hard origin/feature/d
+echo z >> "$T/rootR/deltaS/d.txt"
+assert_eq "  ...nor one with uncommitted changes on it" \
+  "$(renv "${MV[@]}" -- move --targets laptop deltaL-main --json | jq -r '.targets[0].why')" "its checkout of feature/d has uncommitted changes"
+git -C "$T/rootR/deltaS" checkout -q -- d.txt
+assert_eq "an existing worktree on another branch does not qualify" \
+  "$(run move --check deltaL "$T/origins/delta.git" wt1 agent/other true | jq -r .why)" "its worktree wt1 is on agent/wt1"
+git -C "$T/root/deltaL" commit -q --allow-empty -m "laptop only"
+O=$(echo note | run move --local deltaL main feature/d false 2>&1); RC=$?
+assert_contains "move --local refuses a checkout that is not exactly origin's" "$O" "is not at origin/feature/d"
+assert_eq "  ...exit 1"                                   "$RC" "1"
+git -C "$T/root/deltaL" reset -q --hard HEAD~1
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
