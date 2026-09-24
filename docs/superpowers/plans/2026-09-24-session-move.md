@@ -41,7 +41,7 @@ Two pieces of existing code are extracted so `open`/`new` and `move` share them:
 - **Commit messages** end with:
   ```
   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-  Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ
+  Claude-Session: <this session>
   ```
 
 ## Review Focus
@@ -150,7 +150,7 @@ Expected: `… passed, 0 failed`. Then run `shellcheck fleet`, which should prin
 ```bash
 git add fleet test/run.sh
 git commit -m "hook: keep the whole reply as handoff while fleet move waits for a note" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -301,7 +301,7 @@ Expected: `… passed, 0 failed` (same count as Step 1), and shellcheck prints n
 ```bash
 git add fleet
 git commit -m "Extract prepare_checkout (open) and start_session (new) for fleet move" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -551,7 +551,7 @@ Expected: `… passed, 0 failed`. If `nofleet`'s reason differs (host_fetch maps
 ```bash
 git add fleet test/run.sh
 git commit -m "fleet move --targets: which Macs can take a session, and why not" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -675,7 +675,7 @@ Expected: `… passed, 0 failed`, and shellcheck prints nothing.
 ```bash
 git add fleet test/run.sh test/shims/tmux
 git commit -m "fleet move --ask: the source agent writes a handoff note" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -897,7 +897,7 @@ Expected: `fleet: usage: fleet move [-y] [--no-attach] [--model <m>] <host> <ses
 ```bash
 git add fleet test/run.sh
 git commit -m "fleet move: take a session to another Mac with a handoff note" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -959,7 +959,7 @@ Expected: `0 failed`, and shellcheck prints nothing.
 ```bash
 git add docs/demo-fleet test/run.sh
 git commit -m "demo-fleet: answer move --targets and move" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -1190,7 +1190,7 @@ Take a screenshot (`screencapture -l` or ⌘⇧4), check it, then quit the app.
 ```bash
 git add app/Shared/Models.swift app/Fleet/Fleet.swift app/Fleet/Model.swift app/Fleet/ModelActions.swift app/Fleet/SessionView.swift app/Fleet/ContentView.swift
 git commit -m "Mac app: Move a session to another Mac" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
 
 ---
@@ -1299,5 +1299,5 @@ Expected: `0 failed`. Also check that every function name the docs mention exist
 ```bash
 git add CLAUDE.md README.md SECURITY.md docs/superpowers/specs/2026-09-24-session-move-design.md
 git commit -m "Docs: fleet move" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01E3UhJCFdxe91W8tPp1WCNJ"
+Claude-Session: <this session>"
 ```
