@@ -82,9 +82,10 @@ A host qualifies when:
   changes to tracked files and no live fleet session running in it (a
   checkout would change the branch under that agent).
 
-The probe is `fleet move --check <project-or-remote> <name> <branch>
-<worktree>` run on each candidate with `run_on`; it prints one tsv line
-`ok|no <tab> <target project> <tab> <reason>`. `--targets` prints a table
+The probe is `fleet move --check <project> <remote> <name> <branch>
+<worktree>` on each candidate, fanned out with `gather_into`/`host_fetch`
+(so offline, dead and hung hosts cost what they cost `ls`); it prints one
+JSON object `{ok, project, why}`. `--targets` prints a table
 (host, project, reason for the ones that do not qualify, dimmed), or with
 `--json`:
 
@@ -120,10 +121,14 @@ On the source, over `run_on`, `fleet move --ask <session>`:
   Ns; the session is left as it was" on timeout, or on `blocked` (the agent
   asked for permission after all).
 
-`said` is clipped to 800 by the hook. That is too short for a note, so the
-hook stops clipping `said` in its state file only while a handoff is
-pending (a `$FLEET_STATE/<session>.handoff-pending` marker written by
-`--ask`, removed when it finishes); the record keeps the 800 clip.
+`said` is clipped to 800 characters and flattened to one line by the hook,
+which is too little for a note. While a
+`$FLEET_STATE/<session>.handoff-pending` marker exists (written by `--ask`,
+removed when it finishes), the hook's `done` also stores the full
+`last_assistant_message` as `handoff` in the state file: newlines kept,
+other control characters dropped, capped at 20000 characters. `--ask` reads
+`handoff`. The record never carries it (status picks fields by name), and
+`said` is unchanged.
 
 Then step 1's checks run again on a fresh `record_for`; a change (a new
 commit, dirty files) aborts with the reason, the session left as it is.
@@ -134,7 +139,7 @@ The note, wrapped in a header, goes to the target on stdin:
 
 ```
 This session was moved from <source host> to <target host> by fleet.
-Branch <branch>, now at <short sha> <subject>. The previous agent's handoff:
+Branch <branch>, last commit: <subject>. The previous agent's handoff:
 
 <note>
 ```
@@ -151,11 +156,14 @@ Branch <branch>, now at <short sha> <subject>. The previous agent's handoff:
    local branch is an error here, not a warning: the target must end up at
    exactly what the source pushed. Prints its dim step lines as `open` does.
 2. Writes stdin to `$FLEET_STATE/<session>.handoff`.
-3. `new_local <project> <task> "" <handoff file>`: `new_local` gains an
-   optional fourth argument; when set, the typed claude line ends with
-   `"$(cat <f>; rm -f <f>)"` (path through `shq`), so the note is claude's
-   first prompt, never passes through `send-keys` as text, and is removed
-   as soon as it is read. `<task>` is empty when `name` is `main`.
+3. `start_session <session> <dir> <project> <model> <handoff file>`: the
+   tail of `new_local` (tmux session, claude typed in, brand, register),
+   moved into a function both use. With a file, the typed claude line ends
+   with `"$(cat <f>; rm -f <f>)"` (path through `shq`), so the note is
+   claude's first prompt, never passes through `send-keys` as text, and is
+   removed as soon as it is read. The session name is `session_name
+   <target project> <name>`; a session of that name already running there
+   is refused.
 4. Prints the directory, as `new --local` does.
 
 The session keeps the source's model only if the owner chose one; `move`
@@ -181,9 +189,12 @@ starts there. [y/N]"; not a tty = refuse, as `kill` does.
 ## Mac app
 
 - `Move` in the session's action row (`SessionView`), a `Menu` whose items
-  are the targets; "Move to" submenu in `SessionMenu`. Targets load when
-  the menu opens (`fleet move --targets <host> <session> --json`); `ok:
-  false` targets are shown disabled with their reason.
+  are the targets; "Move To" submenu in `SessionMenu`. Targets load when
+  the session screen shows, and again when the record's movability
+  changes (`fleet move --targets <host> <session> --json`); `ok: false`
+  targets are shown disabled with their reason. The sidebar's context menu
+  uses the targets already loaded, else offers "Move To…", which selects
+  the session so its screen loads them.
 - The button itself is disabled with a help text when the record already
   says it cannot move (`state`, `dirty`, `upstream`, `ahead`: the same
   rules as step 1, in `Session` in Shared/Models.swift), so no call is made
@@ -197,6 +208,9 @@ starts there. [y/N]"; not a tty = refuse, as `kill` does.
   with FLEET_TERM. On failure: the banner (the `fleet:` line, else stderr).
 - `FleetCLI` stays the only thing that runs fleet. A `MoveTargets` model
   mirroring the `--targets --json` shape goes in Shared/Models.swift.
+
+`docs/demo-fleet` answers `move --targets … --json` and `move -y
+--no-attach …` with made-up data, so the button can be tried without Macs.
 
 ## Docs
 
