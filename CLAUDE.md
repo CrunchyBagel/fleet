@@ -305,7 +305,12 @@ whoever runs it.
   (line 1 the directory, line 2 the project). `ls` and `attach` show only registered rows;
   `ls --all` shows everything. A registered session in the repo itself (`worktree: false`)
   is forgotten as soon as its tmux session is gone; a worktree session stays
-  until `reap` removes the worktree. Anything started outside `fleet new`,
+  until `reap` removes the worktree. A worktree removed some other way (an
+  agent that merged its branch and removed its own worktree, then carried on
+  in the main clone) leaves an entry pointing nowhere: `status`
+  (`adopt_orphans`) re-points it at the main clone while its tmux session
+  lives, so it is listed as a session in the repo itself, else forgets it.
+  Anything started outside `fleet new`,
   including `claude --worktree`, is not shown by default.
 - `install_hooks` merges the five hook groups into `~/.claude/settings.json`
   with jq (idempotent: an event already running `fleet hook` is skipped; a

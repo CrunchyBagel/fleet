@@ -1003,5 +1003,20 @@ assert_contains "move --local refuses a checkout that is not exactly origin's" "
 assert_eq "  ...exit 1"                                   "$RC" "1"
 git -C "$T/root/deltaL" reset -q --hard HEAD~1
 
+section "a session whose worktree is gone"
+# The agent merged its branch and removed its own worktree, then kept working
+# in the main clone: its registry entry points at a directory that is gone.
+run new --local deltaL orphan >/dev/null
+git -C "$T/root/deltaL" worktree remove "$T/root/deltaL/.claude/worktrees/orphan"; git -C "$T/root/deltaL" branch -q -D agent/orphan
+J=$(renv "FAKE_TMUX_SESSIONS=plainR-main deltaL-orphan" -- status --json)
+assert_eq "a live session whose worktree is gone is still listed, in the main clone" \
+  "$(printf '%s' "$J" | jq -r '.[] | select(.session=="deltaL-orphan") | "\(.name) \(.worktree) \(.path)"')" "orphan false $TR/root/deltaL"
+assert_eq "  ...its registry entry now points there"   "$(sed -n 1p "$T/state/sessions/deltaL-orphan")" "$T/root/deltaL"
+run new --local deltaL gone >/dev/null
+git -C "$T/root/deltaL" worktree remove "$T/root/deltaL/.claude/worktrees/gone"; git -C "$T/root/deltaL" branch -q -D agent/gone
+J=$(run status --json)
+assert_eq "a dead one whose worktree is gone is not listed" "$(printf '%s' "$J" | jq -r '[.[] | select(.session=="deltaL-gone")] | length')" "0"
+assert_false "  ...and is forgotten"                   test -e "$T/state/sessions/deltaL-gone"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

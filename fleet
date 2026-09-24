@@ -148,6 +148,22 @@ is_managed() {       # $1 session $2 in_worktree(true|false): registered, and st
   if [ "$2" = false ] && ! tmux has-session -t "$1" 2>/dev/null; then forget_session "$1"; return 1; fi
   return 0
 }
+# A registered session whose directory is gone (its worktree was removed,
+# often by the agent itself after merging its branch) would match no row. If
+# it is still alive it now counts as a session in the repo itself, where
+# such an agent carries on; if not, it is forgotten.
+adopt_orphans() {    # $1 project $2 its primary clone
+  local f dir s
+  for f in "$FLEET_SESSIONS"/*; do
+    [ -e "$f" ] && [ "$(sed -n 2p "$f")" = "$1" ] || continue
+    dir=$(sed -n 1p "$f")
+    [ -n "$dir" ] && [ ! -d "$dir" ] || continue
+    s=$(basename "$f")
+    if tmux has-session -t "$s" 2>/dev/null; then register_session "$s" "$2" "$1"
+    else forget_session "$s"; fi
+  done
+  return 0
+}
 # Sessions registered for a directory: the session names, one per line.
 sessions_in() {      # $1 dir
   local f
@@ -285,6 +301,7 @@ status_project() {
   local ahead behind upstream managed activity in_wt sessions af remote claude_session hookjson stats
   main=$(project_repo "$project") || return 0
   mainreal=$(realdir "$main")
+  adopt_orphans "$project" "$main"
   remote=$(git -C "$main" remote get-url origin 2>/dev/null || true)
 
   git -C "$main" worktree list --porcelain 2>/dev/null \
