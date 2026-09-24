@@ -142,8 +142,14 @@ struct ClaudeSetupView: View {
             .help("Show only what differs, or everything")
         }
         .pickerStyle(.segmented)
-        .fixedSize(horizontal: false, vertical: true)
         .controlSize(.small)
+        // A flexible frame, so the bar reports no minimum width of its own:
+        // segmented controls cannot shrink, and a detail column whose minimum
+        // size changes while it is being laid out (switching to this screen
+        // with the data already loaded) makes AppKit throw from
+        // updateConstraints and the app abort.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.bar)
     }
