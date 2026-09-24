@@ -777,6 +777,12 @@ O=$(PATH="/usr/bin:/bin" "$DEMO" claude copy mcp nope --from studio --to mini 2>
 assert_contains "demo-fleet: a copy that dies says so on stderr only" "$O" "fleet: no mcp 'nope' on studio"
 assert_eq "  ...exit 1"                               "$RC" "1"
 
+O=$(PATH="/usr/bin:/bin" "$DEMO" move --targets studio Website-main --json)
+assert_eq "demo-fleet move --targets has the CLI's shape" \
+  "$(printf '%s' "$O" | jq -r '[(.movable | type == "boolean"), (.source.session == "Website-main"), all(.targets[]; (.ok | type) == "boolean" and (.why | type) == "string")] | all')" "true"
+O=$(PATH="/usr/bin:/bin" "$DEMO" move -y --no-attach studio Website-main mbp16)
+assert_eq "demo-fleet move ends with host, session, dir" "$(printf '%s\n' "$O" | tail -1 | cut -f1,2)" "$(printf 'mbp16\tWebsite-main')"
+
 section "MCP servers that plugins provide"
 PH="$T/ph/.claude"; mkdir -p "$PH/plugins/cache/sp/.claude-plugin" "$PH/plugins/cache/mp" "$PH/plugins/cache/offp/.claude-plugin"
 printf '{"enabledPlugins":{"sp@official":true,"mp@official":true,"offp@official":false}}' > "$PH/settings.json"

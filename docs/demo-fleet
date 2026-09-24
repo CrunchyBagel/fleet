@@ -118,5 +118,21 @@ case "${1:-} ${2:-}" in
                      fi
                      printf '  ok    removed %s %s on %s\n' "$4" "$5" "$t"
                    done ;;
+  "move --targets") jq -n --arg h "$3" --arg s "$4" '
+                     ($s | sub("-[^-]*$"; "")) as $p
+                     | {source: {host: $h, session: $s, project: $p, name: "main", branch: "main", worktree: false,
+                                 remote: "", subject: "demo"},
+                        movable: true, why: "",
+                        targets: ([{host: "studio", project: $p, ok: true, why: ""},
+                                   {host: "mbp16", project: $p, ok: true, why: ""},
+                                   {host: "mini", project: "", ok: false, why: "no clone of this repo under FLEET_ROOT"},
+                                   {host: "air", project: "", ok: false, why: "offline according to Tailscale"}]
+                                  | map(select(.host != $h)))}' ;;
+  "move -y")       sess="$5"; target="$6"; proj="${sess%-*}"
+                   for step in "asking the agent in $sess for a handoff note" "got the handoff note" \
+                               "preparing $proj on $target" "ending $sess on $4"; do
+                     sleep 1; printf '  %s\n' "$step"
+                   done
+                   printf '%s\t%s\t/Users/you/code/%s\n' "$target" "$proj-main" "$proj" ;;
   *)               : ;;
 esac
