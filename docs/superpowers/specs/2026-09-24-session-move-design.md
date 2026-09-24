@@ -159,7 +159,8 @@ Branch <branch>, last commit: <subject>. The previous agent's handoff:
 3. `start_session <session> <dir> <project> <model> <handoff file>`: the
    tail of `new_local` (tmux session, claude typed in, brand, register),
    moved into a function both use. With a file, the typed claude line ends
-   with `"$(cat <f>; rm -f <f>)"` (path through `shq`), so the note is
+   with `-- "$(cat <f>; rm -f <f>)"` (path through `shq`; `--` because
+   `--remote-control [name]` would otherwise take the prompt as its name), so the note is
    claude's first prompt, never passes through `send-keys` as text, and is
    removed as soon as it is read. The session name is `session_name
    <target project> <name>`; a session of that name already running there

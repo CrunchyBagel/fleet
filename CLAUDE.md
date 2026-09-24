@@ -182,12 +182,18 @@ whoever runs it.
   there, fanned out through `host_fetch`, answers `{ok, project, why}`;
   `move --targets [--json]` shows them. Then `move --ask` on the source
   types `HANDOFF_PROMPT` into the pane and waits up to FLEET_HANDOFF_TIMEOUT
-  for a `done` whose state file has `handoff` (the hook writes it only while
-  `<session>.handoff-pending` exists); no agent in the pane = no note. The
+  for the `done` of that turn (its kept `prompt` starts with the request)
+  and reads `handoff` (the hook writes it only while
+  `<session>.handoff-pending` exists; the marker holds the waiting pid, so a
+  live one refuses a second move and a dead one is taken over); no agent in
+  the pane = no note. The
   record is checked again, then `move --local` on the target gets header +
   note on stdin: `prepare_checkout … strict` (shared with `open`, which only
-  warns), the note into `<session>.handoff`, and `start_session` (shared
-  with `new`) types `claude … "$(cat f; rm -f f)"`. Only after that does
+  warns; strict = on the branch, at exactly origin's commit, nothing
+  uncommitted, which `move --check` checks too), the note into
+  `<session>.handoff`, and `start_session` (shared with `new`) types
+  `claude … -- "$(cat f; rm -f f)"` (`--`: `--remote-control [name]` would
+  take the prompt as its name). Only after that does
   `kill --local` end the source; then it attaches like `new`.
   `hosts info --json` carries `model` (the identifier, `Mac15,8`) and
   `model_name` (`system_profiler`'s "Model Name", `""` if unknown, absent
