@@ -335,7 +335,9 @@ status_project() {
         behind=${1:-0}; ahead=${2:-0}
       fi
 
-      for session in $sessions; do
+      # One session per line, read as lines: a name may hold spaces.
+      while IFS= read -r session <&3; do
+        [ -n "$session" ] || continue
         if [ "$in_wt" = true ]; then name=$(basename "$wtpath")
         else name=${session#"$(session_name "$project" "")"}; fi   # "<project>-<name>" -> "<name>"
         state=$(agent_state "$session")
@@ -369,7 +371,7 @@ status_project() {
            | .limit_5h = ($st.limit_5h // -1) | .limit_5h_reset = ($st.limit_5h_reset // 0)
            | .limit_7d = ($st.limit_7d // -1) | .limit_7d_reset = ($st.limit_7d_reset // 0)
            | .stats_ts = ($st.ts // 0) | del(.h, .st)'
-      done
+      done 3<<< "$sessions"
     done
 }
 
@@ -1035,9 +1037,10 @@ move_check() {
       if [ -n "$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
         move_verdict false "$project" "its clone has uncommitted changes on $cur"; return 0
       fi
-      for s in $(sessions_in "$repo"); do
+      while IFS= read -r s <&3; do
+        [ -n "$s" ] || continue
         if tmux has-session -t "$s" 2>/dev/null; then move_verdict false "$project" "$s works in its clone, on $cur"; return 0; fi
-      done
+      done 3<<< "$(sessions_in "$repo")"
     fi
   fi
   move_verdict true "$project" ""

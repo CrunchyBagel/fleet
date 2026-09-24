@@ -399,6 +399,15 @@ assert_contains "  ...and attached over ssh, the remote shell parsing the quoted
 rm -f "$RH/.local/state/fleet/sessions/plainR-won't-fix"
 : > "$SHIM_LOG"; renv "FAKE_TMUX_SESSIONS=plainR-main plain-main plain-won't-fix" -- kill -y laptop "plain-won't-fix" >/dev/null 2>&1
 assert_contains "  ...and killed by that name"             "$(cat "$SHIM_LOG")" "tmux kill-session -t plain-won't-fix"
+: > "$SHIM_LOG"
+SP=$(printf 'plain-main\nplain-Third Party APIs')
+assert_eq "a name with spaces in it is a session too"  "$(run new laptop plain "Third Party APIs" --no-attach | cut -f2)" "plain-Third Party APIs"
+assert_contains "  ...typed into the pane as one name"    "$(cat "$SHIM_LOG")" "claude -n 'laptop-plain-Third Party APIs'"
+assert_eq "  ...and status lists it under that name"       "$(renv "FAKE_TMUX_SESSIONS=$SP" -- status --json | jq -r '.[] | select(.project=="plain") | .session' | LC_ALL=C sort | tr '\n' '|')" "plain-Third Party APIs|plain-main|"
+: > "$SHIM_LOG"; renv "FAKE_TMUX_SESSIONS=$SP" FLEET_TERM=inline -- attach laptop "plain-Third Party APIs" >/dev/null 2>&1
+assert_contains "  ...so attach by name finds it"          "$(cat "$SHIM_LOG")" "tmux new-session -A -s plain-Third Party APIs"
+: > "$SHIM_LOG"; renv "FAKE_TMUX_SESSIONS=$SP" -- kill -y laptop "plain-Third Party APIs" >/dev/null 2>&1
+assert_contains "  ...and kill by name ends it"            "$(cat "$SHIM_LOG")" "tmux kill-session -t plain-Third Party APIs"
 assert_contains "new --no-attach refuses an inexact project" "$(run new laptop plai --no-attach 2>&1)" "no project 'plai'"
 
 section "models"
