@@ -803,5 +803,23 @@ assert_eq "  ...and exits 1"                             "$RC" "1"
 assert_contains "rm of a server a Mac has only through a plugin is 'not on'" \
   "$(renv HOME="$T/ph" FLEET_HOSTS="laptop studio" -- claude rm -y mcp sentry laptop 2>&1)" "ok    mcp sentry not on laptop"
 
+section "hook: handoff"
+: > "$T/state/plain-main.handoff-pending"
+printf '%s' '{"last_assistant_message":"Goal: x.\nNext: **y** with `z`\u001b[31m.\r\nDone."}' \
+  | renv FAKE_TMUX_SESSION=plain-main -- hook done >/dev/null
+assert_eq "while a handoff is pending, done keeps the whole reply as handoff" \
+  "$(jq -r .handoff "$T/state/plain-main.json")" "$(printf 'Goal: x.\nNext: **y** with `z`[31m.\nDone.')"
+assert_eq "  ...said is still the clipped one-liner"   "$(jq -r .said "$T/state/plain-main.json")" "Goal: x. Next: y with z [31m. Done."
+rm -f "$T/state/plain-main.handoff-pending"
+printf '%s' '{"last_assistant_message":"later"}' | renv FAKE_TMUX_SESSION=plain-main -- hook done >/dev/null
+assert_eq "without the marker there is no handoff key" "$(jq -r 'has("handoff")' "$T/state/plain-main.json")" "false"
+: > "$T/state/plain-main.handoff-pending"
+renv FAKE_TMUX_SESSION=plain-main -- hook running </dev/null >/dev/null
+assert_eq "  ...nor for a state other than done"      "$(jq -r 'has("handoff")' "$T/state/plain-main.json")" "false"
+printf '%s' '{"last_assistant_message":"note"}' | renv FAKE_TMUX_SESSION=plain-main -- hook done >/dev/null
+assert_eq "the record never carries handoff" \
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- status --json | jq -r '[.[] | has("handoff")] | any')" "false"
+rm -f "$T/state/plain-main.handoff-pending"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

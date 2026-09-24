@@ -2640,6 +2640,7 @@ cmd_hook() {
   #   prompt      UserPromptSubmit's text: what the agent is working on
   #   note        Notification's message (or its type): what it is asking for
   #   said        Stop's last_assistant_message: what it said when it finished
+  #   handoff     the whole of it, only while `fleet move` waits for a note
   # Each survives events that lack it, except that running clears note and
   # said, and done clears note. Never block on stdin.
   local state="${1:-idle}" session input="" line old='{}' f
@@ -2652,12 +2653,16 @@ cmd_hook() {
   mkdir -p "$FLEET_STATE"
   f="$FLEET_STATE/$session.json"
   if [ -f "$f" ] && jq -e 'type == "object"' "$f" >/dev/null 2>&1; then old=$(cat "$f"); fi
-  printf '%s' "$input" | jq -c --arg state "$state" --argjson ts "$(date +%s)" --argjson old "$old" '
+  # While `fleet move` waits for a handoff note (move_ask), keep the whole
+  # reply too: said is clipped to one line of 800, too little for a note.
+  local full=false; [ -e "$FLEET_STATE/$session.handoff-pending" ] && full=true
+  printf '%s' "$input" | jq -c --arg state "$state" --argjson ts "$(date +%s)" --argjson old "$old" --argjson full "$full" '
     def clip($n): gsub("\\*\\*|`"; "") | gsub("[\\p{Cc}]"; " ") | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "") | if length > $n then .[:$n] + "…" else . end;   # plain text: no bold, code marks or control characters (terminal escapes)
     # A prompt that is a tag is Claude Code talking to itself (a task
     # notification), not the owner: never the answer to "working on".
     def owners: if type == "string" and (test("^\\s*<[a-z-]+[ >]") | not) then . else "" end;
-    ($old | if type == "object" then . else {} end) as $o
+    . as $in
+    | ($old | if type == "object" then . else {} end) as $o
     | ((.user_input // .prompt // "") | owners) as $p
     | (.message // .notification_data.message // "") as $msg
     | (.notification_type // "") as $nt
@@ -2676,7 +2681,11 @@ cmd_hook() {
                elif $nt == "agent_needs_input" then "needs input"
                elif $nt == "elicitation_dialog" or $nt == "elicitation_url_dialog" then "asking a question"
                elif $nt != "" then $nt else ($o.note // "needs you") end),
-        said: $said }' > "$f.tmp" 2>/dev/null \
+        said: $said }
+    | if $full and $state == "done"
+      then .handoff = ($in.last_assistant_message // "" | if type == "string" then . else "" end
+                       | gsub("\r"; "") | gsub("[\\x01-\\x08\\x0b-\\x1f\\x7f]"; "") | .[:20000])
+      else . end' > "$f.tmp" 2>/dev/null \
     && mv "$f.tmp" "$f"
   rm -f "$f.tmp"
 }
