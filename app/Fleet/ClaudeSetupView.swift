@@ -4,8 +4,8 @@ import SwiftUI
 /// between the Macs (`fleet claude --json`), as a list that says in words
 /// what differs, and an inspector showing the selected item on each Mac.
 /// Permission rules sit in a collapsed section: they outnumber everything
-/// else and matter less. The bar above the list (segmented, so the choice
-/// is always in view) turns it into one Mac's report (what it has or lacks
+/// else and matter less. The bar above the list (its choice always in
+/// view) turns it into one Mac's report (what it has or lacks
 /// against the other Macs, or against one chosen Mac): the rows, the
 /// Differences filter and the wording are then relative to it.
 struct ClaudeSetupView: View {
@@ -119,35 +119,42 @@ struct ClaudeSetupView: View {
 
     /// The controls above the list, always in view with their choice showing:
     /// which Mac's report this is (every Mac at once, or one), what that Mac
-    /// is compared with, and whether to list only what differs.
+    /// is compared with, and whether to list only what differs. Every control
+    /// is always there and sized to its content, so nothing shifts or
+    /// truncates when a choice changes; the second one is merely disabled
+    /// while every Mac is shown.
     private func scopeBar(answered: [String]) -> some View {
-        HStack(spacing: 16) {
-            Picker("Mac", selection: $focus) {
+        HStack(spacing: 20) {
+            Picker("Mac:", selection: $focus) {
                 Text("All Macs").tag(String?.none)
+                Divider()
                 ForEach(answered, id: \.self) { Text($0).tag(String?.some($0)) }
             }
+            .pickerStyle(.menu).fixedSize()
             .help("Every Mac at once, or one Mac's report: what it has or lacks")
-            if let f = focus {
-                Picker("Compared with", selection: $against) {
-                    Text("All others").tag(String?.none)
+            Picker("Compared with:", selection: $against) {
+                Text(focus == nil ? "—" : "All others").tag(String?.none)
+                if let f = focus {
+                    Divider()
                     ForEach(answered.filter { $0 != f }, id: \.self) { Text($0).tag(String?.some($0)) }
                 }
-                .help("Compare \(f) with every other Mac, or with one of them")
             }
+            .pickerStyle(.menu).fixedSize()
+            .disabled(focus == nil)
+            .help(focus.map { "Compare \($0) with every other Mac, or with one of them" } ?? "Choose a Mac first")
             Spacer(minLength: 0)
-            Picker("Show", selection: $onlyDifferences) {
+            Picker("Show:", selection: $onlyDifferences) {
                 Text("Differences").tag(true)
                 Text("All").tag(false)
             }
+            .pickerStyle(.segmented).fixedSize()
             .help("Show only what differs, or everything")
         }
-        .pickerStyle(.segmented)
         .controlSize(.small)
         // A flexible frame, so the bar reports no minimum width of its own:
-        // segmented controls cannot shrink, and a detail column whose minimum
-        // size changes while it is being laid out (switching to this screen
-        // with the data already loaded) makes AppKit throw from
-        // updateConstraints and the app abort.
+        // a detail column whose minimum size changes while it is being laid
+        // out (switching to this screen with the data already loaded, or a
+        // refresh) makes AppKit throw from updateConstraints and the app abort.
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()
         .padding(.horizontal, 12).padding(.vertical, 8)
