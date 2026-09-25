@@ -234,6 +234,10 @@ struct FleetCLI {
         return (parts[0], parts[1], parts[2])
     }
     /// `fleet doctor <host>`: the text report, exit 1 meaning "has FAILs".
+    /// `fleet claude show <host> <file>`: one Mac's CLAUDE.md or script, to read.
+    static func claudeFile(_ name: String, on host: String) async throws -> String {
+        try await run(["claude", "show", host, name], timeout: 30)
+    }
     static func doctor(host: String) async throws -> String {
         try await run(["doctor", host], tolerate: true)
     }

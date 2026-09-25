@@ -44,10 +44,23 @@ struct ClaudeSetupView: View {
             ) { r in
                 Button("Remove", role: .destructive) { model.claudeRemove(r.item, from: r.host) }
             } message: { r in
-                Text(r.item.kind == "file" || r.item.kind == "setting" || r.item.kind == "perm"
-                     ? "fleet claude rm runs on \(r.host). The file it changes is backed up once as .fleet-backup."
-                     : "fleet claude rm runs on \(r.host) and removes it through Claude Code.")
+                Text(Self.removalNote(r.item, on: r.host))
             }
+    }
+
+    /// What Remove does, in plain words, so the confirmation is not scarier than the change.
+    static func removalNote(_ item: ClaudeItem, on host: String) -> String {
+        let backup = "The first time fleet changes that file it keeps a copy of the original next to it (.fleet-backup)."
+        switch item.kind {
+        case "setting":
+            return "Only the \(item.name) line is taken out of ~/.claude/settings.json on \(host); Claude Code then uses its default. Nothing else in the file changes. " + backup
+        case "perm":
+            return "Only this rule is taken out of ~/.claude/settings.json on \(host); the other rules stay. " + backup
+        case "file":
+            return "~/.claude/\(item.name) is deleted on \(host). A copy is kept as \(item.name).fleet-backup, unless fleet already kept one from an earlier change."
+        default:
+            return "Claude Code on \(host) removes it, as its own remove command would."
+        }
     }
 
     private var subtitle: String {
@@ -63,7 +76,8 @@ struct ClaudeSetupView: View {
             let hosts = view.hosts
             let sections = Self.kinds.compactMap { k -> (String, [ClaudeItem])? in
                 let rows = s.items.filter { $0.kind == k && (k == "error" || !onlyDifferences || view.differs($0)) && matches($0) }
-                return rows.isEmpty ? nil : (k, rows)
+                // The default model is the setting people look for: first.
+                return rows.isEmpty ? nil : (k, rows.filter { $0.name == "model" } + rows.filter { $0.name != "model" })
             }
             let rules = s.items.filter { $0.kind == "perm" && (!onlyDifferences || view.differs($0)) && matches($0) }
             VStack(spacing: 0) {
@@ -228,10 +242,12 @@ private struct ClaudeRow: View {
                 Text(item.displayName).lineLimit(1).truncationMode(.middle)
                 if let q = item.qualifier { Text(q).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
+            .layoutPriority(1)                    // the name stays readable; a long value gives way
             Spacer(minLength: 16)
             Text(status)
                 .foregroundStyle(item.kind == "error" ? Color.orange : differs ? Color.primary : Color.secondary)
                 .lineLimit(1)
+                .help(status)
         }
         .padding(.vertical, 2)
     }
@@ -242,6 +258,7 @@ struct ClaudeInspector: View {
     @EnvironmentObject var model: FleetModel
     let item: ClaudeItem
     let hosts: [String]
+    @State private var viewing: String?        // a file's contents in a sheet, starting on this Mac
     var body: some View {
         let versions = item.versions(hosts)
         ScrollView {
@@ -261,9 +278,16 @@ struct ClaudeInspector: View {
                             Image(systemName: symbol(h)).foregroundStyle(color(h)).imageScale(.large)
                             Text(h).font(.headline)
                         }
+                        // A setting's value is what matters there: in full, not greyed out.
+                        let value = item.kind == "setting" && item.name != "env" && item.cell(h) != nil
                         Text(item.detail(h, versions: versions))
-                            .foregroundStyle(.secondary).textSelection(.enabled)
+                            .font(value ? .body.monospaced() : .body)
+                            .foregroundStyle(value ? .primary : .secondary).textSelection(.enabled)
                             .padding(.leading, 30)
+                        if item.kind == "file", item.cell(h) != nil {
+                            Button("View") { viewing = h }.controlSize(.small).padding(.leading, 30)
+                                .help("Show \(item.name) as it is on \(h)")
+                        }
                         if item.kind != "error" {
                             actions(h).padding(.leading, 30).padding(.top, 2)
                                 .controlSize(.small).disabled(model.claudeActionRunning)
@@ -282,6 +306,9 @@ struct ClaudeInspector: View {
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(item: Binding(get: { viewing.map { FileOnMac(host: $0) } }, set: { viewing = $0?.host })) { v in
+            ClaudeFileSheet(item: item, hosts: hosts.filter { item.cell($0) != nil }, versions: versions, host: v.host)
         }
     }
     /// An MCP server some Macs get from a plugin and others from their own
@@ -398,4 +425,65 @@ struct ClaudeRemoval: Identifiable {
     let item: ClaudeItem
     let host: String
     var id: String { item.id + "\u{1F}" + host }
+}
+
+private struct FileOnMac: Identifiable {
+    let host: String
+    var id: String { host }
+}
+
+/// A file (CLAUDE.md, a script) as it is on one Mac, read with `fleet
+/// claude show`; the pop-up switches between the Macs that have it,
+/// lettered when their copies differ.
+private struct ClaudeFileSheet: View {
+    let item: ClaudeItem
+    let hosts: [String]
+    let versions: [String: String]
+    @State var host: String
+    @State private var text: [String: String] = [:]
+    @State private var failed: [String: String] = [:]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label(item.name, systemImage: "doc.text").font(.headline)
+                Spacer()
+                Picker("On", selection: $host) {
+                    ForEach(hosts, id: \.self) { h in
+                        Text(versions.count > 1 ? "\(h) · version \(versions[item.cell(h)?.digest ?? ""] ?? "?")" : h).tag(h)
+                    }
+                }
+                .pickerStyle(.menu).fixedSize()
+            }
+            .padding(12)
+            Divider()
+            Group {
+                if let t = text[host] {
+                    ScrollView([.vertical, .horizontal]) {
+                        Text(t).font(.body.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .topLeading).padding(12)
+                    }
+                } else if let e = failed[host] {
+                    ContentUnavailableView("Could not read it", systemImage: "exclamationmark.triangle", description: Text(e))
+                } else {
+                    ProgressView("Reading it on \(host)…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(minWidth: 560, idealWidth: 720, minHeight: 420, idealHeight: 640)
+        .task(id: host) {
+            guard text[host] == nil else { return }
+            let h = host
+            do { text[h] = try await FleetCLI.claudeFile(item.name, on: h); failed[h] = nil }
+            catch { failed[h] = error.localizedDescription }
+        }
+    }
 }

@@ -23,7 +23,7 @@ struct ContentView: View {
             out.append(.host(h, foldable: node.children != nil))      // not answering: nothing beneath
             guard let kids = node.children, !collapsed.contains(h) else { continue }
             for k in kids { if case .session(let id) = k.item { out.append(.session(id)) } }
-            if kids.isEmpty && query.isEmpty { out.append(.newSession(h)) }
+            if query.isEmpty { out.append(.newSession(h)) }                  // one click to start one, under every machine
         }
         return out
     }
@@ -49,7 +49,7 @@ struct ContentView: View {
                                 SessionRow(session: s).padding(.leading, 18).tag(Item.session(id))
                                     .contextMenu { SessionMenu(session: s) }
                             }
-                        case .newSession(let h):                     // an empty machine looks broken; give it something to do
+                        case .newSession(let h):
                             Button { model.newSessionOn = NewSessionTarget(host: h) } label: {
                                 HStack(spacing: 8) {     // same shape as SessionRow so it lines up
                                     Image(systemName: "plus.circle").frame(width: 10)
@@ -186,6 +186,7 @@ struct HostRow: View {
     @EnvironmentObject var model: FleetModel
     let host: String
     var expanded: Binding<Bool>? = nil      // the sidebar's fold chevron; nil = nothing to fold
+    @State private var hovering = false
     var body: some View {
         let down = model.downReason(for: host)
         HStack {
@@ -201,6 +202,10 @@ struct HostRow: View {
                 .foregroundStyle(down == nil ? .primary : .secondary)
             Text(host).fontWeight(.semibold).foregroundStyle(down == nil ? .primary : .secondary)
             Spacer()
+            if hovering && down == nil && !model.isSelf(host) {       // Screen Sharing without opening the machine first
+                Button { model.screenShare(host) } label: { Image(systemName: "display") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Screen Sharing to \(host)")
+            }
             if model.loading.contains(host) {
                 ProgressView().controlSize(.mini).help("Asking \(host)…")
             } else if down != nil {
@@ -210,6 +215,7 @@ struct HostRow: View {
                 if n > 0 { Text("\(n)").font(.caption).foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 1).background(Capsule().fill(.orange)) }
             }
         }
+        .onHover { hovering = $0 }
     }
 }
 

@@ -352,6 +352,27 @@ extension ClaudeItem {
         }
         return out
     }
+    /// A Mac's value as the CLI summarised it, `""` for an empty one.
+    func shown(_ host: String) -> String {
+        guard let v = cell(host)?.summary else { return "" }
+        return v.isEmpty ? "\"\"" : v
+    }
+    /// A setting's row: just the values in use, in the order of `hosts`
+    /// ("not set" last unless `hosts[0]`, the Mac whose report it is, lacks
+    /// it), not which Mac has which (the inspector says).
+    /// Long values are shortened for the row. The CLI clips values: when
+    /// two differing ones clip alike, say how many there are instead.
+    func values(_ hosts: [String], mineFirst: Bool = false) -> String {
+        var seen: [String] = []
+        for h in hosts {
+            let v = cell(h) == nil ? "not set" : shown(h).count > 32 ? shown(h).prefix(31) + "…" : shown(h)
+            if !seen.contains(v) { seen.append(v) }
+        }
+        let have = hosts.filter { cell($0) != nil }, n = versions(have).count
+        if Set(have.map(shown)).count < n { return "\(n) versions" + (have.count < hosts.count ? " · not set" : "") }
+        if !mineFirst || cell(hosts[0]) != nil { seen = seen.filter { $0 != "not set" } + seen.filter { $0 == "not set" } }
+        return seen.joined(separator: " · ")
+    }
     /// The plugin that provides this MCP server on some Mac, if any.
     var providingPlugin: String? { cells.values.compactMap { $0?.plugin }.first }
 
@@ -369,19 +390,13 @@ extension ClaudeItem {
             return parts.joined(separator: " · ")
         }
         guard !have.isEmpty else { return "Nowhere" }
+        if kind == "setting" && name != "env" { return values(hosts) }
         if have.count == 1 && !missing.isEmpty { return "Only on \(have[0])" }
         var parts: [String] = []
         if Set(have.compactMap { cell($0)?.digest }).count > 1 {
             switch kind {
             case "plugin":
                 parts.append("Disabled on " + have.filter { cell($0)?.summary == "disabled" }.formatted(.list(type: .and)))
-            case "setting" where name != "env":
-                // The CLI clips values to 12 characters: when two differing
-                // values clip alike, say how many there are instead.
-                var seen: [String] = []
-                for h in have { let v = cell(h)!.summary; if !seen.contains(v) { seen.append(v) } }
-                parts.append(seen.count < versions(have).count ? "\(versions(have).count) versions"
-                             : seen.map { $0.isEmpty ? "\"\"" : $0 }.joined(separator: " · "))
             default:
                 parts.append("\(versions(have).count) versions")
             }
@@ -405,6 +420,7 @@ extension ClaudeItem {
         let missWord = kind == "setting" ? "not set on" : "missing on"
         let missCap = kind == "setting" ? "Not set on" : "Missing on"
         if kind == "error" { return cell(h) != nil ? "Not valid JSON on \(h)" : "Not valid JSON on " + list(have) }
+        if kind == "setting" && name != "env" { return values([h] + others, mineFirst: true) }
         guard let c = cell(h) else {
             if have.isEmpty { return "Nowhere" }
             return "\(missCap) \(h) · on " + list(have)
@@ -423,17 +439,6 @@ extension ClaudeItem {
                 case "plugin":
                     parts.append(c.summary == "disabled" ? "Disabled on \(h) · enabled on " + list(diff)
                                                          : "Enabled on \(h) · disabled on " + list(diff))
-                case "setting" where name != "env":
-                    // The CLI clips values to 12 characters: when the other
-                    // values clip alike, say only that they differ.
-                    var seen: [String] = []
-                    for o in diff { let v = cell(o)!.summary; if !seen.contains(v) { seen.append(v) } }
-                    let mine = c.summary.isEmpty ? "\"\"" : c.summary
-                    if seen.count == 1 && seen[0] != c.summary {
-                        parts.append("\(mine) on \(h) · \(seen[0].isEmpty ? "\"\"" : seen[0]) on " + list(diff))
-                    } else {
-                        parts.append("\(mine) on \(h) · differs on " + list(diff))
-                    }
                 default:
                     let v = versions([h] + others)
                     parts.append("Version \(v[c.digest] ?? "?") on \(h) · "
@@ -464,8 +469,7 @@ extension ClaudeItem {
         case "error": return "Not valid JSON: fix it by hand"
         case "setting" where name == "env": return ["Set (values hidden)", letter].compactMap { $0 }.joined(separator: " · ")
         case "setting":
-            let shown = c.summary.isEmpty ? "\"\"" : c.summary
-            return c.summary.hasSuffix("…") ? [letter, shown].compactMap { $0 }.joined(separator: " · ") : shown
+            return c.summary.hasSuffix("…") ? [letter, shown(host)].compactMap { $0 }.joined(separator: " · ") : shown(host)
         case "mcp" where providingPlugin != nil:
             return "Standalone · " + c.summary          // the difference is where it comes from, not a version
         default:

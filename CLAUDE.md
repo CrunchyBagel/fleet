@@ -153,7 +153,9 @@ whoever runs it.
   (`claude get --local`) and pipes it into `claude set --local` on each
   target (claude CLI for plugin/marketplace/mcp, never `-y`; jq with a
   one-time `.fleet-backup` for settings/perm; temp file + mv for files).
-  `claude rm [-y]` runs `claude unset --local`. The table (and `--diff`)
+  `claude rm [-y]` runs `claude unset --local`. `claude show <host>
+  <file>` prints that Mac's file (`claude get --local file` there; files
+  only, every other kind's value can hold a secret). The table (and `--diff`)
   hides `perm` rows behind one count line, since rules outnumber everything
   and matter less; `--kind <k>[,<k>]` shows only those kinds (`--kind perm`
   for the rules) and also filters `--json`, which otherwise has every row.
@@ -405,7 +407,9 @@ whoever runs it.
   Mac is the source; only the state comes from it), a marketplace "Add
   on X"/"Add <repo>", an MCP entry "Copy entry to/from X", the rest "Copy
   to/from X"; split buttons ("… on Others") take the Macs one at a time;
-  Remove… is confirmed. A first version drew
+  Remove… is confirmed. A file has a View button per Mac: a sheet with
+  its contents (`fleet claude show`), a pop-up switching Macs, lettered
+  when their copies differ. A first version drew
   the CLI's matrix (dots, digests, cell menus); the owner found it ugly and
   un-Mac-like, so do not go back to that. Badge = differing items without
   permission rules, which sit in a collapsed section. A bar above the
@@ -419,7 +423,10 @@ whoever runs it.
   mid-layout made AppKit throw and the app abort); the rows, the Differences filter and the wording follow
   that choice (`Perspective` in the view, `ClaudeItem.differs(among:)` and
   `status(on:against:)`: "Missing on studio · on the other Macs", "Only on
-  studio, not on mini", "Version A on studio · B on mini"), the inspector
+  studio, not on mini", "Version A on studio · B on mini"; a setting's row
+  lists just the values in use, "claude-fable-5-1 · not set", not which
+  Mac has which (`ClaudeItem.values`), `model` first;
+  the CLI's summary keeps 120 characters, the row 32, the terminal table 12), the inspector
   lists the chosen Macs first, and the sidebar badge stays the overall
   count. It is view state, not a preference. Not polled: loaded
   after the first load, when shown, on ⌘R/toolbar Refresh (`refreshNow`)
@@ -488,9 +495,10 @@ whoever runs it.
   the real marks: SVG path data from Simple Icons (CC0) in `Brand`, drawn
   by `SVGShape` (lines and cubics only, no assets). Action buttons are icon over caption
   with a shared minimum width (`FilledStyle`) so the row never wraps; there
-  is no Copy path button, the path is selectable in the details grid. A
-  machine with no sessions gets a "New session…" row in the sidebar, which
-  opens the same sheet as the machine screen's button: a type-to-filter
+  is no Copy path button, the path is selectable in the details grid. Every
+  machine gets a "New session…" row under its sessions in the sidebar
+  (not while searching), and hovering a remote machine's row shows a
+  Screen Sharing button; the New-session row opens the same sheet as the machine screen's button: a type-to-filter
   field over a list of the host's projects (Enter starts when one is
   chosen), and Start keeps the sheet up with a status line through `fleet
   new` and the attach, closing on success and showing the error otherwise
