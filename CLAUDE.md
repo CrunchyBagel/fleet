@@ -398,9 +398,14 @@ whoever runs it.
   (`ClaudeItem.status`: "Only on studio", "Missing on mini", "medium ·
   high", "2 versions"; version letters, never digests), with an
   `.inspector` showing the selected item on each Mac that answered
-  (`ClaudeItem.detail`) and visible buttons: Copy to Others (split button,
-  only to Macs that lack it or differ; never `--to all`, which would
-  include down Macs), Remove… (confirmed), Get from. A first version drew
+  (`ClaudeItem.detail`) and visible buttons that say what happens (all
+  `fleet claude copy` underneath, never `--to all`, which would include
+  down Macs): a plugin "Install on X"/"Install from <marketplace>" and
+  "Enable/Disable on X" (the install is from the marketplace whichever
+  Mac is the source; only the state comes from it), a marketplace "Add
+  on X"/"Add <repo>", an MCP entry "Copy entry to/from X", the rest "Copy
+  to/from X"; split buttons ("… on Others") take the Macs one at a time;
+  Remove… is confirmed. A first version drew
   the CLI's matrix (dots, digests, cell menus); the owner found it ugly and
   un-Mac-like, so do not go back to that. Badge = differing items without
   permission rules, which sit in a collapsed section. A bar above the

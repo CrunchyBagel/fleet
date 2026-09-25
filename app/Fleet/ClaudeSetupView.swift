@@ -307,9 +307,12 @@ struct ClaudeInspector: View {
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    /// What can be done from this Mac: copy its version to the Macs that
-    /// lack it or differ, or remove it here; or, when it lacks the item, get
-    /// it from a Mac that has it. Only the Macs that answered are offered.
+    /// What can be done from this Mac, in the words of what happens: a
+    /// plugin is installed from its marketplace (only its enabled state comes
+    /// from here), a marketplace is added by its repo, an MCP entry, a
+    /// setting, a rule or a file is copied. Or, when this Mac lacks the item,
+    /// get it: "Install from <marketplace>", "Add <repo>", "Copy from <Mac>".
+    /// Only the Macs that answered are offered.
     @ViewBuilder private func actions(_ h: String) -> some View {
         let others = hosts.filter { $0 != h }
         if let c = item.cell(h), c.plugin != nil {
@@ -318,33 +321,64 @@ struct ClaudeInspector: View {
             HStack(spacing: 8) {
                 // Not onto a Mac that has it through a plugin: it would run twice (the box above says so).
                 let behind = others.filter { item.cell($0)?.digest != c.digest && item.cell($0)?.plugin == nil }
-                if behind.count == 1 {
-                    Button("Copy to \(behind[0])") { model.claudeCopy(item, from: h, to: behind) }
-                        .help("Make \(behind[0]) match \(h)")
-                } else if !behind.isEmpty {
-                    Menu {
-                        ForEach(behind, id: \.self) { o in Button("Copy to \(o) Only") { model.claudeCopy(item, from: h, to: [o]) } }
-                    } label: {
-                        Text(behind.count == others.count && others.count > 1 ? "Copy to Others" : "Copy to " + behind.formatted(.list(type: .and)))
-                    } primaryAction: {
-                        model.claudeCopy(item, from: h, to: behind)
-                    }
-                    .fixedSize()
-                    .help("Make \(behind.formatted(.list(type: .and))) match \(h)")
+                let lacking = behind.filter { item.cell($0) == nil }, differing = behind.filter { item.cell($0) != nil }
+                switch item.kind {
+                case "plugin":
+                    push("Install", "on", to: lacking, from: h, all: others.count)
+                    push(c.summary == "disabled" ? "Disable" : "Enable", "on", to: differing, from: h, all: others.count)
+                case "marketplace":
+                    push("Add", "on", to: lacking, from: h, all: others.count)
+                    push("Copy", "to", to: differing, from: h, all: others.count)
+                case "mcp":
+                    push("Copy entry", "to", to: behind, from: h, all: others.count)
+                default:
+                    push("Copy", "to", to: behind, from: h, all: others.count)
                 }
                 Button("Remove…", role: .destructive) { model.claudeConfirmRemove = ClaudeRemoval(item: item, host: h) }
                     .help("Remove it from \(h)")
             }
         } else {
             let sources = others.filter { item.cell($0) != nil && item.cell($0)?.plugin == nil }   // a plugin's server travels as the plugin
-            if sources.count == 1 {
-                Button("Get from \(sources[0])") { model.claudeCopy(item, from: sources[0], to: [h]) }
-            } else if !sources.isEmpty {
-                Menu("Get from") {
-                    ForEach(sources, id: \.self) { o in Button(o) { model.claudeCopy(item, from: o, to: [h]) } }
+            if sources.isEmpty {
+                EmptyView()
+            } else if item.kind == "plugin" {
+                // The install is from the marketplace whichever Mac is the source; take the enabled state from one that has it on.
+                let src = sources.first { item.cell($0)?.summary != "disabled" } ?? sources[0]
+                Button("Install from \(item.qualifier ?? "its marketplace")") { model.claudeCopy(item, from: src, to: [h]) }
+                    .help("claude plugin install on \(h); adds the marketplace there first if it lacks it")
+            } else if item.kind == "marketplace" {
+                let repo = item.cell(sources[0])?.summary ?? ""
+                Button(repo.isEmpty ? "Add from \(sources[0])" : "Add \(repo)") { model.claudeCopy(item, from: sources[0], to: [h]) }
+                    .help("claude plugin marketplace add on \(h)")
+            } else {
+                let verb = item.kind == "mcp" ? "Copy entry" : "Copy"
+                if sources.count == 1 {
+                    Button("\(verb) from \(sources[0])") { model.claudeCopy(item, from: sources[0], to: [h]) }
+                } else {
+                    Menu("\(verb) from") {
+                        ForEach(sources, id: \.self) { o in Button(o) { model.claudeCopy(item, from: o, to: [h]) } }
+                    }
+                    .fixedSize()
                 }
-                .fixedSize()
             }
+        }
+    }
+    /// "<verb> <prep> mini", or a split button "<verb> <prep> Others" (every
+    /// other Mac) / "… mini and mbp16" whose menu takes them one at a time.
+    @ViewBuilder private func push(_ verb: String, _ prep: String, to targets: [String], from h: String, all: Int) -> some View {
+        if targets.count == 1 {
+            Button("\(verb) \(prep) \(targets[0])") { model.claudeCopy(item, from: h, to: targets) }
+                .help("Make \(targets[0]) match \(h)")
+        } else if !targets.isEmpty {
+            Menu {
+                ForEach(targets, id: \.self) { o in Button("\(verb) \(prep) \(o) Only") { model.claudeCopy(item, from: h, to: [o]) } }
+            } label: {
+                Text("\(verb) \(prep) " + (targets.count == all && all > 1 ? "Others" : targets.formatted(.list(type: .and))))
+            } primaryAction: {
+                model.claudeCopy(item, from: h, to: targets)
+            }
+            .fixedSize()
+            .help("Make \(targets.formatted(.list(type: .and))) match \(h)")
         }
     }
     private func symbol(_ h: String) -> String {
