@@ -1389,7 +1389,7 @@ claude_sha() { /usr/bin/perl -MDigest::SHA=sha256_hex -ne 'chomp; print sha256_h
 CLAUDE_SNAPSHOT_JQ='
 def canon: walk(if type == "object" then to_entries | sort_by(.key) | from_entries else . end) | tojson;
 def clip($n): if length > $n then .[0:$n - 1] + "…" else . end;
-def shown: if type == "string" then . else tojson end | clip(12);
+def shown: if type == "string" then . else tojson end | clip(120);   # the table clips again, to 12
 ($s[0] // {}) as $s | ($u[0] // {}) as $u | ($m[0] // {}) as $m | ($skip | split(" ")) as $skip
 | [ ($m | to_entries[] | {kind: "marketplace", name: .key, value: .value.source,
         summary: (.value.source | (.repo // .url // .path // .source // "") | tostring)}),
@@ -1508,7 +1508,7 @@ claude_table() {
       elif $k == "plugin" then (if .summary == "disabled" then "○" else "●" end)
       elif $k == "perm" then "●"
       elif $k == "error" then "!"
-      elif $k == "setting" and $n != "env" then (.summary | if . == "" then "\"\"" else . end)
+      elif $k == "setting" and $n != "env" then (.summary | if . == "" then "\"\"" else clip(12) end)
       else .digest[0:4] end;
     .hosts as $hosts
     | [.items[] | . as $i | [.kind, (.name | clip(40))] + [$hosts[] as $h | $i.cells[$h] | cell($i.kind; $i.name)]] as $rows
@@ -1814,6 +1814,17 @@ claude_copy() {
   return "$DOCTOR_RC"
 }
 
+# claude_show <host> <file>: one of that Mac's files (CLAUDE.md, scripts/*)
+# as it is, for reading. Files only: every other kind's full value can hold
+# a secret, which only `copy` moves, and never to the screen.
+claude_show() {
+  local usage="usage: fleet claude show <host> <file>" h
+  [ $# -eq 2 ] || die "$usage"
+  h=$(claude_host "$1") || exit 1
+  claude_valid_file "$2" || die "files are CLAUDE.md or scripts/<name>"
+  run_on "$h" "fleet claude get --local file $(shq "$2")" || die "no $2 on $h"
+}
+
 claude_rm() {   # [-y] <kind> <name> <host...>|all
   local usage="usage: fleet claude rm [-y] <kind> <name> <host...>|all"
   local yes=0 k n h hosts="" a tmp
@@ -1864,6 +1875,7 @@ cmd_claude() {
       "claude_$1_local" "$3" "$4" "${5:-}"; return ;;
     copy) shift; claude_copy "$@"; return ;;
     rm)   shift; claude_rm "$@"; return ;;
+    show) shift; claude_show "$@"; return ;;
   esac
   claude_matrix_cmd "$@"
 }
@@ -3111,6 +3123,7 @@ fleet - Claude Code agent worktrees across your Macs
   fleet claude rm [-y] <kind> <name> <host...>|all
                                   make one item (kinds: marketplace plugin mcp setting perm file)
                                   the same as another Mac's, or remove it; `this` = this Mac
+  fleet claude show <host> <file> print that Mac's CLAUDE.md or scripts/<name>
   fleet projects [host] [--all] [--json]
                                   repos under FLEET_ROOT there, Claude-used first
                                   (--all: also folders that are not repos yet)
