@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -42,7 +42,7 @@
 		491FA8F543B21A286BB40061 /* ScreenSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenSharing.swift; sourceTree = "<group>"; };
 		5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileModel.swift; sourceTree = "<group>"; };
 		5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetMobileApp.swift; sourceTree = "<group>"; };
-		8B53524E43B6752C3CB29043 /* AppIcon.icon */ = {isa = PBXFileReference; path = AppIcon.icon; sourceTree = "<group>"; };
+		8B53524E43B6752C3CB29043 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		A1FBC533AD3B17229A6BB166 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A5876EFC52B99BEE94B76837 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A781C5978BD166C8C9F0E32F /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
@@ -53,7 +53,7 @@
 		C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		CDF72A9CE2101390D23744CD /* Fleet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Fleet.entitlements; sourceTree = "<group>"; };
 		CF449911F45F0E24FAB0D2E1 /* SSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSH.swift; sourceTree = "<group>"; };
-		D17B4E2190C21CCE2552B8BE /* FleetMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FleetMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D17B4E2190C21CCE2552B8BE /* FleetMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; name = FleetMobile.app; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewViews.swift; sourceTree = "<group>"; };
 		F87C6571AAA43C54E273AD9E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -203,7 +203,6 @@
 			packageReferences = (
 				74C850D78F93023A193346F8 /* XCRemoteSwiftPackageReference "Citadel" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -434,6 +433,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Fleet/Fleet.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = 66BCGJJXLX;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Fleet/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -452,6 +452,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Fleet/Fleet.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = 66BCGJJXLX;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Fleet/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
