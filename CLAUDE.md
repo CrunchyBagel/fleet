@@ -537,7 +537,12 @@ whoever runs it.
   `hosts --info-local` until that host has answered once) itself, each host
   its own 10s poll loop whose section updates as its answer lands, so a slow
   or down Mac holds up nothing else (the Macs need no keys to each other;
-  concurrent commands to one host share its pending connect); `projects --json`, `new --local <project> [name]` (session name by
+  concurrent commands to one host share its pending connect; a reused
+  connection that fails is retried once on a fresh one, a timeout drops it,
+  and connections close when the app goes to the background). One failure
+  keeps the host's last sessions; the second in a row marks it down. Hosts
+  show in the Mac app's order (`orderedHosts`: the `hosts info` sort, then
+  down, then not heard from yet); `projects --json`, `new --local <project> [name]` (session name by
   `Session.sessionName`, the CLI's rule) and `kill --local <session>` are
   run on the session's host. No attach, editor or screen sharing; "Open in
   Claude" is the `claude://` link. Polls only while the overview is up; new

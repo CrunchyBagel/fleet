@@ -6,11 +6,12 @@ struct OverviewView: View {
     @EnvironmentObject var model: MobileModel
     @State private var newOn: String?
     @State private var showSettings = false
+    @Environment(\.scenePhase) private var phase
 
     var body: some View {
         List {
             if let u = model.usage { Section("Claude usage") { UsageRows(usage: u) } }
-            ForEach(model.hosts, id: \.self) { h in
+            ForEach(model.orderedHosts, id: \.self) { h in
                 Section {
                     if model.loading(h) {
                         HStack(spacing: 8) { ProgressView(); Text("Asking \(h)…").foregroundStyle(.secondary) }.font(.callout)
@@ -46,6 +47,9 @@ struct OverviewView: View {
         }
         .refreshable { await model.refresh() }
         .task(id: model.hosts) { await poll() }
+        // Connections do not survive the phone sleeping: close them on the
+        // way out rather than finding them dead on the way back.
+        .onChange(of: phase) { _, p in if p == .background { model.resetConnections() } }
         .sheet(item: $newOn) { h in NewSessionSheet(host: h) }
         .sheet(isPresented: $showSettings) { NavigationStack { SettingsView() } }
         .overlay(alignment: .bottom) { Banner() }

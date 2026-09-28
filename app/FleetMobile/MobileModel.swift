@@ -32,6 +32,20 @@ final class MobileModel: ObservableObject {
         return r
     }
 
+    /// The host list in the Mac app's order: the ones answering as `fleet
+    /// hosts info` sorts them (desktops before laptops, then by chip, then
+    /// fewer sessions), then the ones down, then the ones not heard from yet.
+    var orderedHosts: [String] {
+        let list = hosts
+        func key(_ h: String) -> (Int, Int, Int, Int, Int) {
+            let at = list.firstIndex(of: h) ?? 0
+            if down[h] != nil { return (1, 0, 0, 0, at) }
+            guard let i = infos[h] else { return (2, 0, 0, 0, at) }
+            return (0, i.laptop ? 1 : 0, -i.chipScore, sessions.filter { $0.host == h }.count, at)
+        }
+        return list.sorted { key($0) < key($1) }
+    }
+
     func sessions(on host: String) -> [Session] { sessions.filter { $0.host == host }.sorted { ($0.project, $0.name) < ($1.project, $1.name) } }
     func session(id: String) -> Session? { sessions.first { $0.id == id } }
     var usage: UsageLimits? { UsageLimits.freshest(in: sessions) }
@@ -40,6 +54,9 @@ final class MobileModel: ObservableObject {
     /// section updates as soon as it answers, so one slow or unreachable Mac
     /// never holds up the others.
     @Published private(set) var inFlight: Set<String> = []
+    /// Failures in a row per host. One is a blip (a dropped connection, a
+    /// slow answer): the last good sessions stay; the second marks it down.
+    private var failures: [String: Int] = [:]
     var refreshing: Bool { !inFlight.isEmpty }
     /// Asked but not answered yet (first load): the section shows a spinner.
     func loading(_ host: String) -> Bool { inFlight.contains(host) && infos[host] == nil && down[host] == nil }
@@ -69,11 +86,15 @@ final class MobileModel: ObservableObject {
             }
             let s = try JSONDecoder().decode([Session].self, from: Data(try await status.utf8)).filter(\.managed)
             sessions = sessions.filter { $0.host != h } + s
-            down[h] = nil
+            down[h] = nil; failures[h] = 0
             lastRefresh = Date()
         } catch {
-            sessions.removeAll { $0.host == h }
-            down[h] = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            let n = (failures[h] ?? 0) + 1
+            failures[h] = n
+            if n >= 2 || (infos[h] == nil && !sessions.contains { $0.host == h }) {
+                sessions.removeAll { $0.host == h }
+                down[h] = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
         }
     }
 
@@ -126,6 +147,16 @@ extension Session {
     /// `session_name` in the CLI: "<project>-<task>" with . and : as _.
     static func sessionName(project: String, task: String) -> String {
         (project + "-" + task).replacingOccurrences(of: ".", with: "_").replacingOccurrences(of: ":", with: "_")
+    }
+}
+
+extension HostInfo {
+    /// The CLI's power score for `hosts info` (hostinfo_rows): generation
+    /// M1..M4 times two plus tier base/Pro/Max/Ultra = 0..3.
+    var chipScore: Int {
+        let gen = chip.firstMatch(of: /M([0-9]+)/).flatMap { Int($0.1) } ?? 0
+        let tier = chip.contains("Ultra") ? 3 : chip.contains("Max") ? 2 : chip.contains("Pro") ? 1 : 0
+        return gen * 2 + tier
     }
 }
 

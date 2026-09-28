@@ -47,16 +47,32 @@ actor SSHRunner {
     }
 
     func run(on host: String, _ command: String, tolerate: Bool = false, timeout: Duration = .seconds(20)) async throws -> String {
+        let reused = clients[host]?.isConnected == true
+        do {
+            return try await attempt(on: host, command, tolerate: tolerate, timeout: timeout)
+        } catch let e as RemoteError {
+            throw e
+        } catch is TimedOut {
+            throw RemoteError(host: host, message: "no answer in \(timeout.components.seconds)s")
+        } catch where reused {
+            // A connection kept from earlier can be dead without knowing it
+            // (the phone slept, the network changed): once more on a fresh one.
+            return try await attempt(on: host, command, tolerate: tolerate, timeout: timeout)
+        }
+    }
+
+    private func attempt(on host: String, _ command: String, tolerate: Bool, timeout: Duration) async throws -> String {
         let client = try await connection(to: host)
         do {
-            return try await withTimeout(timeout, host: host) {
+            return try await withTimeout(timeout) {
                 try await SSHRunner.exec(client, command, tolerate: tolerate, host: host)
             }
         } catch let e as RemoteError {
             throw e
         } catch {
-            // Anything else is the connection: drop it so the next call reconnects.
-            clients[host] = nil
+            // Anything else is the connection, a timeout included (a
+            // half-dead one never answers): drop it so the next call reconnects.
+            if clients[host] === client { clients[host] = nil }
             try? await client.close()
             throw error
         }
@@ -126,10 +142,11 @@ actor SSHRunner {
         clients = [:]
     }
 
-    private func withTimeout<T: Sendable>(_ d: Duration, host: String, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    private struct TimedOut: Error {}
+    private func withTimeout<T: Sendable>(_ d: Duration, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { g in
             g.addTask { try await op() }
-            g.addTask { try await Task.sleep(for: d); throw RemoteError(host: host, message: "no answer in \(d.components.seconds)s") }
+            g.addTask { try await Task.sleep(for: d); throw TimedOut() }
             let r = try await g.next()!
             g.cancelAll()
             return r
