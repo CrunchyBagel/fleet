@@ -28,6 +28,9 @@ actor SSHRunner {
     }
 
     private var clients: [String: SSHClient] = [:]
+    /// A connect in progress, shared by every command that wants that host
+    /// meanwhile (the actor is reentrant: without it each opened its own).
+    private var connecting: [String: Task<SSHClient, Error>] = [:]
     let username: String
     init(username: String) { self.username = username }
 
@@ -81,6 +84,16 @@ actor SSHRunner {
     /// require that key.
     private func connection(to host: String) async throws -> SSHClient {
         if let c = clients[host], c.isConnected { return c }
+        if let t = connecting[host] { return try await t.value }
+        let t = Task { try await self.connect(to: host) }
+        connecting[host] = t
+        defer { connecting[host] = nil }
+        let c = try await t.value
+        clients[host] = c
+        return c
+    }
+
+    private func connect(to host: String) async throws -> SSHClient {
         let key = try KeyStore.privateKey()
         let auth = SSHAuthenticationMethod.ed25519(username: username, privateKey: key)
         let validator: SSHHostKeyValidator
@@ -105,7 +118,6 @@ actor SSHRunner {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if line.hasPrefix("ssh-ed25519 ") { HostKeys.pin(host, line) }
         }
-        clients[host] = client
         return client
     }
 

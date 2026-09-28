@@ -12,7 +12,9 @@ struct OverviewView: View {
             if let u = model.usage { Section("Claude usage") { UsageRows(usage: u) } }
             ForEach(model.hosts, id: \.self) { h in
                 Section {
-                    if let d = model.down[h] {
+                    if model.loading(h) {
+                        HStack(spacing: 8) { ProgressView(); Text("Asking \(h)…").foregroundStyle(.secondary) }.font(.callout)
+                    } else if let d = model.down[h] {
                         Label(d, systemImage: "bolt.slash").foregroundStyle(.secondary).font(.callout)
                     } else if model.sessions(on: h).isEmpty {
                         Text("No sessions").foregroundStyle(.secondary).font(.callout)
@@ -43,17 +45,24 @@ struct OverviewView: View {
             }
         }
         .refreshable { await model.refresh() }
-        .task { await poll() }
+        .task(id: model.hosts) { await poll() }
         .sheet(item: $newOn) { h in NewSessionSheet(host: h) }
         .sheet(isPresented: $showSettings) { NavigationStack { SettingsView() } }
         .overlay(alignment: .bottom) { Banner() }
     }
 
     /// Poll while this screen is up; SwiftUI cancels the task when it goes.
+    /// Each host is its own loop, so a slow one only delays its own section.
     private func poll() async {
-        while !Task.isCancelled {
-            await model.refresh()
-            try? await Task.sleep(for: .seconds(10))
+        await withTaskGroup(of: Void.self) { g in
+            for h in model.hosts {
+                g.addTask {
+                    while !Task.isCancelled {
+                        await model.refresh(host: h)
+                        try? await Task.sleep(for: .seconds(10))
+                    }
+                }
+            }
         }
     }
 }

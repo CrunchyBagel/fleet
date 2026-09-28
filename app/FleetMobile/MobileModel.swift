@@ -14,7 +14,6 @@ final class MobileModel: ObservableObject {
     @Published var down: [String: String] = [:]
     @Published var projects: [String: [ProjectEntry]] = [:]
     @Published var lastRefresh: Date?
-    @Published var refreshing = false
     @Published var error: String?
     @Published var busy: String?
 
@@ -37,34 +36,45 @@ final class MobileModel: ObservableObject {
     func session(id: String) -> Session? { sessions.first { $0.id == id } }
     var usage: UsageLimits? { UsageLimits.freshest(in: sessions) }
 
-    /// Ask every host at once; a host that fails contributes its reason.
+    /// Hosts with a request in flight. Each host is asked on its own and its
+    /// section updates as soon as it answers, so one slow or unreachable Mac
+    /// never holds up the others.
+    @Published private(set) var inFlight: Set<String> = []
+    var refreshing: Bool { !inFlight.isEmpty }
+    /// Asked but not answered yet (first load): the section shows a spinner.
+    func loading(_ host: String) -> Bool { inFlight.contains(host) && infos[host] == nil && down[host] == nil }
+
+    /// Ask every host at once; returns when all have answered. A host still
+    /// busy from the last round is left to finish.
     func refresh() async {
-        guard !refreshing, setupComplete else { return }
-        refreshing = true; defer { refreshing = false }
-        let r = ssh()
+        guard setupComplete else { return }
         let list = hosts
-        var newSessions: [Session] = [], newInfos: [String: HostInfo] = [:], newDown: [String: String] = [:]
-        await withTaskGroup(of: (String, Result<(HostInfo, [Session]), Error>).self) { g in
-            for h in list {
-                g.addTask {
-                    do {
-                        async let info = r.fleet(on: h, ["hosts", "--info-local"], timeout: .seconds(12))
-                        async let status = r.fleet(on: h, ["status", "--json"], timeout: .seconds(15))
-                        let i = try JSONDecoder().decode(HostInfo.self, from: Data(try await info.utf8))
-                        let s = try JSONDecoder().decode([Session].self, from: Data(try await status.utf8)).filter(\.managed)
-                        return (h, .success((i, s)))
-                    } catch { return (h, .failure(error)) }
-                }
-            }
-            for await (h, result) in g {
-                switch result {
-                case .success(let (i, s)): newInfos[h] = i; newSessions += s
-                case .failure(let e): newDown[h] = (e as? LocalizedError)?.errorDescription ?? "\(e)"
-                }
-            }
+        sessions.removeAll { !list.contains($0.host) }
+        await withTaskGroup(of: Void.self) { g in
+            for h in list { g.addTask { await self.refresh(host: h) } }
         }
-        sessions = newSessions; infos = newInfos; down = newDown; lastRefresh = Date()
-        error = nil
+    }
+
+    /// One host: `status --json` (and `hosts --info-local` until it has
+    /// answered once, it only changes with the hardware), applied as it lands.
+    func refresh(host h: String) async {
+        guard setupComplete, !inFlight.contains(h) else { return }
+        inFlight.insert(h); defer { inFlight.remove(h) }
+        let r = ssh()
+        do {
+            async let status = r.fleet(on: h, ["status", "--json"], timeout: .seconds(15))
+            if infos[h] == nil {
+                let out = try await r.fleet(on: h, ["hosts", "--info-local"], timeout: .seconds(12))
+                infos[h] = try JSONDecoder().decode(HostInfo.self, from: Data(out.utf8))
+            }
+            let s = try JSONDecoder().decode([Session].self, from: Data(try await status.utf8)).filter(\.managed)
+            sessions = sessions.filter { $0.host != h } + s
+            down[h] = nil
+            lastRefresh = Date()
+        } catch {
+            sessions.removeAll { $0.host == h }
+            down[h] = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+        }
     }
 
     func loadProjects(on host: String) async {
@@ -80,14 +90,14 @@ final class MobileModel: ObservableObject {
         do {
             var args = ["new", "--local", project]; if let n = name, !n.isEmpty { args.append(n) }
             _ = try await ssh().fleet(on: host, args, timeout: .seconds(40))
-            await refresh()
+            await refresh(host: host)
             return Session.sessionName(project: project, task: name?.isEmpty == false ? name! : "main")
         } catch { self.error = "new: \(error.localizedDescription)"; return nil }
     }
 
     func endSession(_ s: Session) async {
         busy = "Ending \(s.title): asking the agent to exit…"; defer { busy = nil }
-        do { _ = try await ssh().fleet(on: s.host, ["kill", "--local", s.session], timeout: .seconds(30)); await refresh() }
+        do { _ = try await ssh().fleet(on: s.host, ["kill", "--local", s.session], timeout: .seconds(30)); await refresh(host: s.host) }
         catch { self.error = "end: \(error.localizedDescription)" }
     }
 

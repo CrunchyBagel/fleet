@@ -533,12 +533,15 @@ whoever runs it.
   keeps one connection per host and runs
   `export PATH=…; "$HOME/bin/fleet" <args>` with every argument
   single-quoted (`SSHRunner.shq`), `tolerate` returning stdout+stderr on a
-  non-zero exit as the Mac app does. Per host it runs `hosts --info-local`
-  and `status --json` itself in a task group (the Macs need no keys to each
-  other); `projects --json`, `new --local <project> [name]` (session name by
+  non-zero exit as the Mac app does. Per host it runs `status --json` (and
+  `hosts --info-local` until that host has answered once) itself, each host
+  its own 10s poll loop whose section updates as its answer lands, so a slow
+  or down Mac holds up nothing else (the Macs need no keys to each other;
+  concurrent commands to one host share its pending connect); `projects --json`, `new --local <project> [name]` (session name by
   `Session.sessionName`, the CLI's rule) and `kill --local <session>` are
   run on the session's host. No attach, editor or screen sharing; "Open in
-  Claude" is the `claude://` link. Polls every 10s while the overview is up.
+  Claude" is the `claude://` link. Polls only while the overview is up; new
+  and end refresh just that host.
   The overview is one line per session under its host (a blocked one adds
   its question); there is no "needs you" section, the prompt and reply live
   on the session screen. Settings > Hosts refreshes the list by asking the
