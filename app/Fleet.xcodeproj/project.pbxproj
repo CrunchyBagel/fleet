@@ -53,7 +53,7 @@
 		C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		CDF72A9CE2101390D23744CD /* Fleet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Fleet.entitlements; sourceTree = "<group>"; };
 		CF449911F45F0E24FAB0D2E1 /* SSH.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSH.swift; sourceTree = "<group>"; };
-		D17B4E2190C21CCE2552B8BE /* FleetMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; name = FleetMobile.app; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D17B4E2190C21CCE2552B8BE /* Fleet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewViews.swift; sourceTree = "<group>"; };
 		F87C6571AAA43C54E273AD9E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -92,7 +92,7 @@
 			isa = PBXGroup;
 			children = (
 				BB851BD8F45E2DDBD2D07009 /* Fleet.app */,
-				D17B4E2190C21CCE2552B8BE /* FleetMobile.app */,
+				D17B4E2190C21CCE2552B8BE /* Fleet.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -152,7 +152,7 @@
 				5264CE5893240A31FCCAD7BC /* Citadel */,
 			);
 			productName = FleetMobile;
-			productReference = D17B4E2190C21CCE2552B8BE /* FleetMobile.app */;
+			productReference = D17B4E2190C21CCE2552B8BE /* Fleet.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E0C89610D57360EF13CA3790 /* Fleet */ = {
@@ -273,6 +273,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 66BCGJJXLX;
 				INFOPLIST_FILE = FleetMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -413,6 +414,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 66BCGJJXLX;
 				INFOPLIST_FILE = FleetMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
