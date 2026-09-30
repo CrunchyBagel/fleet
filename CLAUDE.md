@@ -113,6 +113,9 @@ whoever runs it.
   shape; two matches = no guess), because the same repo can sit under
   different directory names on different Macs. `pick`/`record_for` rows carry
   the origin URL as their last column for this.
+- `open` of a session on this Mac (host = FLEET_SELF) opens its checkout as
+  it is: no fetch, no switch, no fast-forward (a detached one too). Only a
+  remote session goes through `prepare_checkout`.
 - `open` ends in `open_checkout`, driven by FLEET_OPEN (`auto` default):
   `auto` = xcode when `xed` exists and `xcode_target` finds a workspace or
   project (at the repo root or one level down, many repos nest

@@ -2154,6 +2154,14 @@ cmd_open() {
   else sel=$(pick --all "${1:-}") || return 1; fi
   [ -z "$sel" ] && return 1
   IFS=$'\t' read -r _ host project name branch session path state worktree remote <<< "$sel"
+  # A session on this Mac is already here: open it as it is, no fetch.
+  local dir=""
+  if [ "$host" = "$FLEET_SELF" ]; then
+    if [ "$worktree" = true ]; then dir=$(worktree_path "$project" "$name") || dir=""
+    else dir=$(project_repo "$project") || dir=""; fi
+    [ -d "$dir" ] || dir="$path"
+    [ -d "$dir" ] && { open_checkout "$dir"; return; }
+  fi
   [ "$branch" = "(detached)" ] && die "$project/$name on $host is detached, nothing to pull"
 
   # The local clone is the directory of the same name, else the one clone

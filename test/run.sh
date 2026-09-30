@@ -289,7 +289,11 @@ assert_contains "a workspace at the root wins over a nested project" "$(cat "$SH
 O=$(renv FLEET_HOSTS="laptop studio" "FAKE_TMUX_SESSIONS=plainR-main rowingR-main" -- open studio rowingR-main 2>&1)
 assert_contains "open finds the local clone by origin when the directory name differs" "$O" "no rowingR here, using simulatorL"
 assert_eq "  ...and switches it to the remote's branch"  "$(git -C "$T/root/simulatorL" rev-parse --abbrev-ref HEAD)" "feature/oars"
-assert_contains "open refuses a detached row"           "$(run open laptop alpha-det 2>&1 || true)" "detached"
+O=$(renv "FAKE_TMUX_SESSIONS=plainR-main" -- open laptop plainR-main 2>&1)
+assert_lacks "open of a session on this Mac does not fetch" "$O" "fetching"
+: > "$SHIM_LOG"; O=$(run open laptop alpha-det 2>&1 || true)
+assert_lacks "open of a detached row on this Mac opens it" "$O" "detached"
+assert_contains "  ...as it is"                         "$(cat "$SHIM_LOG")" "alpha"
 
 # ---------------------------------------------------------------- reap
 

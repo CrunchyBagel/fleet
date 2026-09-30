@@ -156,7 +156,8 @@ in with OAuth has to be authenticated once on the new Mac (`/mcp`).
 ## Opening a checkout
 
 `fleet open` fetches the session's branch into the local clone (or a local
-worktree), fast-forwards, and opens it. The local clone is the directory
+worktree), fast-forwards, and opens it. A session on the Mac you are
+at is opened as it is, without fetching. The local clone is the directory
 of the same name under `FLEET_ROOT`, or failing that the one clone there
 with the same origin, so a repo may sit under different directory names on
 different Macs. What it opens it in is `FLEET_OPEN`
