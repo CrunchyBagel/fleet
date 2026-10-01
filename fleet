@@ -2855,7 +2855,13 @@ update_checkout() {   # $1 checkout dir; ok/fail lines, status via DOCTOR_RC
       return 0
     fi
   fi
-  git -C "$co" log --format='  %h %s' "HEAD..$up" | head -20
+  git -C "$co" log -n 20 --format='  %h %s' "HEAD..$up"   # not | head: SIGPIPE + pipefail ends fleet here
+  [ "$n" -le 20 ] || printf '  … and %s more\n' "$((n - 20))"
+  if ! git -C "$co" merge-base --is-ancestor HEAD "$up" 2>/dev/null; then
+    fail "$co is not an ancestor of $up (history rewritten upstream, or local commits); not updating" \
+         "cd '$co' && git status && git reset --hard $up   (drops local commits)"
+    return 0
+  fi
   if git -C "$co" merge -q --ff-only "$up" 2>/dev/null; then ok "updated $co: $n new commit(s)"
   else fail "fast-forward to $up failed in $co" "cd '$co' && git status   (local changes?)"; fi
 }
