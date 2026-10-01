@@ -33,16 +33,20 @@ cd "$(dirname "$0")/.."         # app/
 echo "==> Building $SCHEME (Release)"
 # Quiet on success, whole log on failure: xcodebuild is noisy even with -quiet,
 # and prints a confusing "failed with exit code 0" line for builds that warn.
+XB=(xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release
+  -destination 'platform=macOS' -derivedDataPath "$BUILD_DIR")
 LOG="$(mktemp -t "$SCHEME-build")"
-if ! xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath "$BUILD_DIR" build >"$LOG" 2>&1; then
+if ! "${XB[@]}" build >"$LOG" 2>&1; then
   cat "$LOG" >&2
   rm -f "$LOG"
   exit 1
 fi
 rm -f "$LOG"
 
-PRODUCT="$BUILD_DIR/Build/Products/Release/$APP"
+# Ask Xcode where the products went: a custom Build Location in Xcode >
+# Settings > Locations (Relative to Workspace) wins over -derivedDataPath.
+PRODUCTS="$("${XB[@]}" -showBuildSettings 2>/dev/null | sed -n 's/^ *BUILT_PRODUCTS_DIR = //p' | head -1 || true)"
+PRODUCT="${PRODUCTS:-$BUILD_DIR/Build/Products/Release}/$APP"
 if [ ! -d "$PRODUCT" ]; then
   printf 'build finished but %s is missing\n' "$PRODUCT" >&2
   exit 1
