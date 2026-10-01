@@ -2382,8 +2382,14 @@ doctor_local() {
           grep -qx '.build/' "${f:-/dev/null}"
     t=$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null || true)
     check "Xcode DerivedData is workspace-relative .build (got '${t:-default}')" \
-          "Xcode > Settings > Locations > Derived Data: Custom, Relative to Workspace, path .build" \
+          "Xcode > Settings > Locations > Derived Data: Relative, then type .build (leave Advanced… > Build Location as it is)" \
           test "$t" = ".build"
+    # The Advanced build location wins over Derived Data and -derivedDataPath:
+    # Custom puts the products in an untracked Build/ inside every repo.
+    t=$(defaults read com.apple.dt.Xcode IDEBuildLocationStyle 2>/dev/null || true)
+    check "Xcode build location follows Derived Data (got '${t:-Unique}')" \
+          "Xcode > Settings > Locations > Advanced… > Build Location: Unique" \
+          test "$t" != "Custom"
   else
     printf '%s  · no Xcode: DerivedData checks skipped%s\n' "$DIM" "$RESET"
   fi
