@@ -2586,6 +2586,38 @@ cmd_hosts_info() {   # fleet hosts info [host...] [--json]: the same table, non-
   return 0
 }
 
+# fleet hosts speed <host> [--json]: a crude throughput test, for the app's
+# choice of Screen Sharing mode off the wired LAN. Times one ssh that sends
+# SPEED_BYTES of random data (incompressible, and Compression=no anyway)
+# against a 1-byte one (macOS head refuses -c 0) for the connection setup; the difference is the
+# transfer. Mbit/s, or exit 1 when the host does not answer.
+SPEED_BYTES=3000000
+speed_secs() {   # $1 host, $2 bytes: seconds that one ssh sending that many took, or fail
+  local TIMEFORMAT=%3R out
+  out=$( { time ssh -o BatchMode=yes -o ConnectTimeout="$FLEET_SSH_TIMEOUT" -o Compression=no "$1" \
+             "$(with_path "head -c $2 /dev/urandom")" > /dev/null 2>&1; } 2>&1 ) || return 1
+  printf '%s' "$out" | tail -n 1 | tr ',' '.'    # bash formats with the locale's decimal point
+}
+
+cmd_hosts_speed() {
+  local host="" asjson=0 a t0 t1
+  for a in "$@"; do
+    case "$a" in
+      --json) asjson=1 ;;
+      *) case " $FLEET_HOSTS " in *" $a "*) host=$a ;; *) die "unknown host '$a'. hosts:$(hosts_line)" ;; esac ;;
+    esac
+  done
+  [ -n "$host" ] || die "usage: fleet hosts speed <host> [--json]"
+  [ "$host" != "$FLEET_SELF" ] || die "$host is this Mac"
+  t0=$(speed_secs "$host" 1) || die "$host did not answer"
+  t1=$(speed_secs "$host" "$SPEED_BYTES") || die "$host did not answer"
+  awk -v b="$SPEED_BYTES" -v t0="$t0" -v t1="$t1" -v h="$host" -v j="$asjson" 'BEGIN {
+    d = t1 - t0; if (d < 0.005) d = 0.005               # a fast LAN finishes inside the noise
+    m = int(b * 8 / d / 1000000)
+    if (j == 1) printf "{\"host\":\"%s\",\"mbps\":%d,\"seconds\":%.3f}\n", h, m, d
+    else printf "%s: %d Mbit/s (%.1f MB in %.2fs, after %.2fs to connect)\n", h, m, b / 1000000, d, t0 }'
+}
+
 # ---------------------------------------------------------------- hosts
 #
 # The host list is ~/.config/fleet/hosts on every machine, one ssh alias per
@@ -2606,6 +2638,7 @@ cmd_hosts() {
   local op="${1:-}" h="${2:-}" t tmp
   case "$op" in
     info) shift; cmd_hosts_info "$@"; return 0 ;;
+    speed) shift; cmd_hosts_speed "$@"; return 0 ;;
     --info-local) hostinfo_local; return 0 ;;
     "")
       for t in $FLEET_HOSTS; do printf '%s\n' "$t"; done
@@ -2653,7 +2686,7 @@ cmd_hosts() {
         else fail "hosts -> $t" "when $t is back: fleet hosts push $t   (fleet update $t does it too)"; fi
       done
       exit "$DOCTOR_RC" ;;
-    *) die "usage: fleet hosts [add [alias] | rm <alias> | push [host...] | info]" ;;
+    *) die "usage: fleet hosts [add [alias] | rm <alias> | push [host...] | info | speed <host>]" ;;
   esac
 }
 
@@ -3154,6 +3187,8 @@ fleet - Claude Code agent worktrees across your Macs
                                   `add` alone adds every Mac on the tailnet
   fleet hosts push [host...]      push the host list again (e.g. a host was off)
   fleet hosts info [--json]       chip, cores, memory, laptop/desktop, sessions per host
+  fleet hosts speed <host> [--json]
+                                  crude ssh throughput to that Mac, in Mbit/s
   fleet keys [add "<pubkey>" | rm <comment>] [--local]
                                   authorize an ssh public key (the iOS app's) on every Mac, or revoke it
   fleet doctor [host...]          check install and config, here or on hosts

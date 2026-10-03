@@ -45,9 +45,15 @@ enum ScreenSharing {
     /// on every link-local IPv6 address first (a minute, seen). High
     /// Performance needs the LAN to have answered, ethernet on both ends
     /// (a `lan_link` of "wifi" or unknown says no) and Apple silicon on both;
-    /// otherwise the LAN gets Full Quality and the tailnet Adaptive.
-    static func plan(host: String, remote: HostInfo?, me: HostInfo?,
-                     probe: @escaping @Sendable (String) async -> Bool = { await reachable($0) }) async -> Target {
+    /// Off the wired LAN, `speed` (`fleet hosts speed`, a crude ssh
+    /// throughput test) decides: at least `highMbps` gets High Performance
+    /// too. `alwaysHigh` (Settings) skips the test. Apple silicon on both
+    /// ends is needed either way. Otherwise the LAN gets Full Quality and
+    /// the tailnet Adaptive.
+    static let highMbps = 75
+    static func plan(host: String, remote: HostInfo?, me: HostInfo?, alwaysHigh: Bool = false,
+                     probe: @escaping @Sendable (String) async -> Bool = { await reachable($0) },
+                     speed: @escaping @Sendable (String) async -> Int? = { _ in nil }) async -> Target {
         var address = host
         var onLAN = false
         let candidates = [remote?.lanIp, remote?.lanName].compactMap { $0 }.filter { !$0.isEmpty }
@@ -62,7 +68,11 @@ enum ScreenSharing {
         }
         let wired = onLAN && remote?.lanLink == "ethernet" && me?.lanLink == "ethernet"
         let silicon = (remote?.chip.hasPrefix("Apple") ?? false) && (me?.chip.hasPrefix("Apple") ?? false)
-        return Target(address: address, mode: wired && silicon ? .highPerformance : onLAN ? .full : .adaptive)
+        let fallback: Mode = onLAN ? .full : .adaptive
+        guard silicon else { return Target(address: address, mode: fallback) }
+        if wired || alwaysHigh { return Target(address: address, mode: .highPerformance) }
+        let fast = (await speed(host) ?? 0) >= highMbps
+        return Target(address: address, mode: fast ? .highPerformance : fallback)
     }
 
     /// Touch the local network once, at launch, so macOS settles Local Network

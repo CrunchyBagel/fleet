@@ -61,6 +61,7 @@ final class FleetModel: ObservableObject {
     @Published var actionError: String?             // from a button; stays until dismissed or the next action
     @Published var busy: [String: String] = [:]      // session id -> what fleet is doing for it right now
     @Published var hostBusy: [String: String] = [:]  // host -> what fleet is doing there (install)
+    @Published var screenSharingTest: String?        // host whose connection is being tested before Screen Sharing opens
     @Published var doctor: [String: [DoctorLine]] = [:]   // host -> last doctor report
     @Published var doctorText: [String: String] = [:]     // the same, as fleet printed it (Copy)
     @Published var doctorRunning: Set<String> = []

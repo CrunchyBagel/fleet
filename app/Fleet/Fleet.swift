@@ -8,6 +8,7 @@ enum Prefs {
     static let fleetBinary = "fleetBinary"           // path; "" = default
     static let showXcode = "showXcode", showClaude = "showClaude", showGitHub = "showGitHub"
     static let showScreenSharing = "showScreenSharing", showFinder = "showFinder"
+    static let screenSharingHigh = "screenSharingHigh"   // High Performance without the speed test
     static let notify = "notifyBlocked", notifySound = "notifySound", menuBar = "menuBar"
     static let defaultRefresh = 8
     /// Bool keys whose default is true: absent means on.
@@ -202,6 +203,13 @@ struct FleetCLI {
     static func claudeRemove(kind: String, name: String, host: String,
                              progress: @escaping @Sendable (String) -> Void) async throws {
         try await runStreaming(["claude", "rm", "-y", kind, name, host], onLine: progress)
+    }
+    /// `fleet hosts speed <host> --json`: crude ssh throughput in Mbit/s,
+    /// for the Screen Sharing mode. Bounded: a link too slow to finish in
+    /// time is too slow for High Performance.
+    static func speed(to host: String) async throws -> Int {
+        struct Speed: Decodable { let mbps: Int }
+        return try await decode(Speed.self, from: run(["hosts", "speed", host, "--json"], timeout: 8)).mbps
     }
     static func attach(host: String, session: String, terminal: Terminal) async throws {
         try await run(["attach", host, session], env: ["FLEET_TERM": terminal.rawValue])

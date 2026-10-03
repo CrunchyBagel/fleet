@@ -110,6 +110,14 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
+            if let h = model.screenSharingTest {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Testing connection to \(h)…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(8).frame(maxWidth: .infinity, alignment: .leading).background(.bar)
+            }
             if let e = model.actionError ?? model.lastError {
                 HStack(alignment: .top, spacing: 8) {
                     Text(e).font(.caption).foregroundStyle(.red).lineLimit(6).textSelection(.enabled)

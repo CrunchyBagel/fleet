@@ -228,6 +228,11 @@ assert_true "hosts info --json lan_name is a Bonjour name or empty" [ -z "$LN" -
 assert_true "hosts info --json lan_link is ethernet, wifi or empty" [ "$LL" = ethernet -o "$LL" = wifi -o -z "$LL" ]
 assert_eq "hosts info <host> --json asks only that host"  "$(renv FLEET_HOSTS="laptop nofleet" -- hosts info laptop --json | jq -c '[.hosts[].host, .down]')" '["laptop",[]]'
 assert_contains "hosts info <unknown> dies"               "$(renv FLEET_HOSTS="laptop" -- hosts info nope --json 2>&1)" "unknown host 'nope'"
+assert_eq "hosts speed --json gives Mbit/s over ssh"   "$(renv FLEET_HOSTS="laptop studio" -- hosts speed studio --json | jq -r '[.host, (.mbps | type), (.mbps > 0)] | join(",")')" "studio,number,true"
+assert_contains "hosts speed says Mbit/s"                 "$(renv FLEET_HOSTS="laptop studio" -- hosts speed studio)" "Mbit/s"
+assert_false "hosts speed fails for a dead host"          renv FLEET_HOSTS="laptop dead" -- hosts speed dead --json
+assert_contains "hosts speed refuses this Mac"            "$(renv FLEET_HOSTS="laptop" -- hosts speed laptop 2>&1)" "is this Mac"
+assert_contains "hosts speed <unknown> dies"              "$(renv FLEET_HOSTS="laptop" -- hosts speed nope 2>&1)" "unknown host 'nope'"
 assert_eq "status records carry the origin URL"         "$(run status --json --all | jq -r '.[] | select(.project=="plain") | .remote')" "$T/origins/alpha.git"
 
 # ---------------------------------------------------------------- attach / open

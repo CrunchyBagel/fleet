@@ -26,11 +26,18 @@ extension FleetModel {
     }
     /// Screen Sharing to a machine: over its LAN address when that answers,
     /// else the tailnet name, and High Performance only when both ends are
-    /// wired (`ScreenSharing.plan`). The probe takes at most a moment.
+    /// wired, the speed test says the link can carry it, or Settings says
+    /// always (`ScreenSharing.plan`). `screenSharingTest` holds the host while
+    /// that runs (a second or two), for the bar at the bottom of the window.
     func screenShare(_ host: String) {
+        guard screenSharingTest == nil else { return }
         let remote = info(for: host), me = selfHost.flatMap { info(for: $0) }
+        let alwaysHigh = UserDefaults.standard.bool(forKey: Prefs.screenSharingHigh)
+        screenSharingTest = host
         Task {
-            let target = await ScreenSharing.plan(host: host, remote: remote, me: me)
+            let target = await ScreenSharing.plan(host: host, remote: remote, me: me, alwaysHigh: alwaysHigh,
+                                                  speed: { try? await FleetCLI.speed(to: $0) })
+            screenSharingTest = nil
             if let u = ScreenSharing.url(target) { NSWorkspace.shared.open(u) }
         }
     }

@@ -23,6 +23,7 @@ struct GeneralSettings: View {
     @AppStorage(Prefs.notify) private var notify = true
     @AppStorage(Prefs.notifySound) private var notifySound = true
     @AppStorage(Prefs.menuBar) private var menuBar = true
+    @AppStorage(Prefs.screenSharingHigh) private var screenHigh = false
     @State private var loginItem = SMAppService.mainApp.status == .enabled
     var body: some View {
         Form {
@@ -53,6 +54,15 @@ struct GeneralSettings: View {
                     }
             } footer: {
                 Text("A notification when an agent stops to ask you something; click it to jump to the session. The menu bar item lists what is waiting and keeps Fleet watching after its window is closed.")
+            }
+            Section {
+                Picker("Screen Sharing", selection: $screenHigh) {
+                    Text("Automatic").tag(false)
+                    Text("Always High Performance").tag(true)
+                }
+                .pickerStyle(.menu)
+            } footer: {
+                Text("High Performance gives you one virtual display sized for this screen instead of the other Mac's own displays. Automatic uses it when both Macs are wired to the same network, and otherwise tests the connection first (a few MB over ssh) and uses it when that is fast enough. Both Macs need Apple silicon.")
             }
             Section {
                 Toggle("Show sessions Fleet did not start", isOn: $showAll)

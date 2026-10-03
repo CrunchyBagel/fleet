@@ -203,6 +203,8 @@ whoever runs it.
   `hosts info --json` carries `model` (the identifier, `Mac15,8`) and
   `model_name` (`system_profiler`'s "Model Name", `""` if unknown, absent
   from older remotes); the app picks the sidebar symbol from `model_name`.
+  `hosts speed <host> [--json]` (`{host, mbps, seconds}`, exit 1 when
+  the host does not answer) is the app's Screen Sharing speed test.
   It also carries `lan_name` (Bonjour `<LocalHostName>.local`), `lan_ip`
   (IPv4 of the default-route interface) and `lan_link` (`ethernet`, `wifi`,
   or `""` when the default route is a VPN or unknown), from `lan_info`, all
@@ -491,7 +493,13 @@ whoever runs it.
   tailnet name; the query is Screen Sharing's own .vncloc URL format and
   presets High Performance, `?quality=high&numVirtualDisplays=1` (only
   when the LAN answered and both Macs report `lan_link` ethernet and an
-  Apple chip; a count of 0, or no count at all, silently gives Standard:
+  Apple chip; off the wired LAN, still Apple silicon on both, when
+  `fleet hosts speed <host> --json` (times 3 MB of `/dev/urandom` over ssh
+  against a 1-byte one, crude) says at least `ScreenSharing.highMbps`, the
+  window showing "Testing connection to X…" at the bottom meanwhile
+  (`screenSharingTest`), or without the test when Settings > General >
+  Screen Sharing is "Always High Performance" (`screenSharingHigh`);
+  a count of 0, or no count at all, silently gives Standard:
   Screen Sharing's log says "pro mode with no virtual displays"), else Standard,
   `?quality=full&numVirtualDisplays=0` (View > Full Quality) on the LAN and
   `quality=adaptive` over the tailnet, so its mode chooser does not come up. The Claude and GitHub buttons draw
