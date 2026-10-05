@@ -50,6 +50,8 @@ struct FleetApp: App {
                 Button("Attach") { if let s = model.selectedSession { model.attach(s) } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(model.selectedSession == nil)
+                Button("Rename…") { model.renaming = model.selectedSession }
+                    .disabled(model.selectedSession == nil || model.selectedSession?.worktree == true)
                 Button("End Session…") { model.confirmEnd = model.selectedSession }
                     .disabled(model.selectedSession == nil)
                 Divider()

@@ -11,10 +11,14 @@ alive() {
   return 1
 }
 case "${1:-}" in
-  has-session)     alive "$3" && exit 0 || exit 1 ;;
+  has-session)     alive "${3#=}" && exit 0 || exit 1 ;;
   display-message) echo "${FAKE_TMUX_SESSION:-detached}" ;;
   list-clients)    exit 0 ;;
-  list-panes)      echo "${FAKE_TMUX_COMMAND:-zsh}" ;;   # what runs in the pane: zsh, or claude
+  list-panes)                                          # what runs in the pane: zsh, or claude;
+    case "$*" in                                       # FAKE_TMUX_PANE: its ":@window.%pane"
+      *pane_id*) [ -z "${FAKE_TMUX_PANE:-}" ] || echo "$FAKE_TMUX_PANE" ;;
+      *)         echo "${FAKE_TMUX_COMMAND:-zsh}" ;;
+    esac ;;
   send-keys)
     # FAKE_TMUX_ANSWER=<file>: play the agent answering fleet move's handoff
     # request: a done state file whose handoff is that file's text, as the

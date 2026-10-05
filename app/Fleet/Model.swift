@@ -90,6 +90,7 @@ final class FleetModel: ObservableObject {
     }()
     @Published var newSessionOn: NewSessionTarget?
     @Published var confirmEnd: Session?             // the End-session dialog is up for this one
+    @Published var renaming: Session?               // the Rename dialog is up for this one
     @Published var moveTargets: [String: MoveTargets] = [:]   // session id -> fleet move --targets
     @Published var confirmMove: PendingMove?                 // the Move dialog is up for this
     var openMain: (() -> Void)?                     // set by the window; reopens it when closed

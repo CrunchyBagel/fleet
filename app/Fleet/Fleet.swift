@@ -226,6 +226,11 @@ struct FleetCLI {
     static func kill(host: String, session: String, progress: @escaping @Sendable (String) -> Void) async throws {
         try await runStreaming(["kill", "-y", host, session], onLine: progress)
     }
+    /// `fleet rename <host> <session> <name>`: the session becomes
+    /// <project>-<name>, in tmux and in Claude Code. Returns fleet's output.
+    static func rename(host: String, session: String, to name: String) async throws -> String {
+        try await run(["rename", host, session, name])
+    }
     /// `fleet move --targets <host> <session> --json`.
     static func moveTargets(host: String, session: String) async throws -> MoveTargets {
         try await decode(MoveTargets.self, from: run(["move", "--targets", host, session, "--json"], timeout: pollTimeout))

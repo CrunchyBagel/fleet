@@ -397,7 +397,48 @@ assert_contains "doctor over ssh sees the remote's own PATH" "$(run doctor studi
 assert_contains "plain fleet with no args runs ls"      "$(renv FLEET_STATE="$T/emptystate" -- 2>&1)" "no fleet sessions"
 assert_contains "ls --json (default) has only managed rows" "$(renv "$ALIVE" -- ls --json | jq -r 'all(.managed)')" "true"
 assert_eq "new --no-attach creates, prints host/session/dir, never prompts" \
-  "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- new laptop plain --no-attach)" "$(printf 'laptop\tplain-main\t%s' "$T/root/plain")"
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main" -- new laptop plain --no-attach)" "$(printf 'laptop\tplain-main\t%s' "$T/root/plain")"
+assert_contains "new refuses a session that is already running, never reattaches" \
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- new laptop plain --no-attach 2>&1)" "plain-main is already running on laptop"
+assert_contains "  ...a named one too" \
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-triage" -- new --local plain triage 2>&1)" "plain-triage is already running"
+assert_contains "  ...a worktree one too"                "$(renv "FAKE_TMUX_SESSIONS=plainB-t9" -- new --local plainB t9 2>&1)" "plainB-t9 is already running"
+assert_false    "  ...and makes no worktree for it"     test -d "$T/root/plainB/.claude/worktrees/t9"
+
+section "rename"
+run new --local plain ren1 >/dev/null
+RN="FAKE_TMUX_SESSIONS=plainR-main plain-main plain-ren1"
+printf '{"state":"done","ts":1}' > "$T/state/plain-ren1.json"; printf '{"ts":1}' > "$T/state/plain-ren1.stats.json"
+: > "$SHIM_LOG"
+O=$(renv "$RN" FAKE_TMUX_COMMAND=claude -- rename laptop plain-ren1 "my fix" 2>&1)
+assert_contains "rename: the session becomes <project>-<name>" "$O" "renamed plain-ren1 to plain-my fix"
+assert_contains "  ...tmux renames it, matched exactly"  "$(cat "$SHIM_LOG")" "tmux rename-session -t =plain-ren1 plain-my fix"
+assert_true     "  ...the registry entry moves"          test -e "$T/state/sessions/plain-my fix"
+assert_false    "  ...from the old name"                 test -e "$T/state/sessions/plain-ren1"
+assert_true     "  ...state and stats files move along"  test -e "$T/state/plain-my fix.stats.json"
+assert_eq       "  ...their content intact"              "$(jq -r .state "$T/state/plain-my fix.json")" "done"
+assert_contains "  ...and Claude Code is told its new name" "$(cat "$SHIM_LOG")" "send-keys -t =plain-my fix: -l /rename laptop-plain-my fix"
+RN="FAKE_TMUX_SESSIONS=plainR-main plain-main plain-ren2"
+printf '{"state":"running","ts":1}' > "$T/state/plain-my fix.json"
+: > "$SHIM_LOG"
+O=$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main
+plain-my fix" FAKE_TMUX_COMMAND=claude -- rename --local "plain-my fix" ren2 2>&1)
+assert_contains "while the agent works only fleet's side is renamed" "$O" "type /rename laptop-plain-ren2 there"
+assert_lacks    "  ...nothing is typed into its pane"   "$(cat "$SHIM_LOG")" "/rename"
+assert_contains "rename refuses a name already running" "$(renv "$RN" -- rename --local plain-ren2 main 2>&1)" "plain-main already exists"
+assert_contains "rename refuses a session that is not running" "$(run rename --local plain-ren2 x 2>&1)" "not running"
+assert_contains "rename refuses what fleet did not start" "$(run rename --local plain-nope x 2>&1)" "not a fleet session"
+run new --local plainB t8 >/dev/null
+assert_contains "rename refuses a worktree session"     "$(renv "FAKE_TMUX_SESSIONS=plainB-t8" -- rename --local plainB-t8 x 2>&1)" "works in a worktree"
+git -C "$T/root/plainB" worktree remove -f "$T/root/plainB/.claude/worktrees/t8"; git -C "$T/root/plainB" branch -q -D agent/t8
+rm -f "$T/state/sessions/plain-ren2" "$T/state/sessions/plainB-t8" "$T/state/plain-ren2".*
+mkdir -p "$T/home/.claude/sessions"
+printf '{"tmux":"plain-ren1:@7.%%7","bridgeSessionId":"session_01renamed"}' > "$T/home/.claude/sessions/1.json"
+assert_eq "claude_session found by its pane after a rename" \
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" FAKE_TMUX_PANE=":@7.%7" -- status --all --json | jq -r '.[] | select(.session == "plain-main") | .claude_session')" "session_01renamed"
+assert_eq "  ...and, with no panes listed, only by the name it started under" \
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main plain-main" -- status --all --json | jq -r '[.[] | select(.claude_session == "session_01renamed")] | length')" "0"
+rm -f "$T/home/.claude/sessions/1.json"
 assert_eq "new --no-attach with a name"                 "$(run new laptop plain triage --no-attach | cut -f2)" "plain-triage"
 : > "$SHIM_LOG"
 assert_eq "a name with a quote in it is a session too"   "$(run new laptop plain "won't-fix" --no-attach | cut -f2)" "plain-won't-fix"

@@ -139,6 +139,8 @@ struct SessionDetailView: View {
     @Environment(\.openURL) private var openURL
     let id: String
     @State private var confirmEnd = false
+    @State private var renaming = false
+    @State private var newName = ""
 
     var body: some View {
         if let s = model.session(id: id) {
@@ -166,6 +168,9 @@ struct SessionDetailView: View {
                         Button { openURL(cu) } label: { Label("Open in Claude", systemImage: "bubble.left.and.text.bubble.right") }
                     }
                     if let gh = s.githubURL { Link(destination: gh) { Label("GitHub", systemImage: "link") } }
+                    if !s.worktree {   // a worktree session's name is its worktree's
+                        Button { newName = s.name == "main" ? "" : s.name; renaming = true } label: { Label("Rename", systemImage: "pencil") }
+                    }
                     Button(role: .destructive) { confirmEnd = true } label: { Label("End session", systemImage: "xmark.octagon") }
                 }
                 Section {
@@ -189,6 +194,17 @@ struct SessionDetailView: View {
             }
             .navigationTitle(s.title)
             .navigationBarTitleDisplayMode(.inline)
+            .alert("Rename \(s.title)", isPresented: $renaming) {
+                TextField("Name", text: $newName)
+                Button("Rename") {
+                    let n = newName.trimmingCharacters(in: .whitespaces)
+                    // Its id changes with the name, so this screen would show it as ended.
+                    if !n.isEmpty && n != s.name { Task { await model.renameSession(s, to: n); dismiss() } }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It becomes \(s.project)-<name> on \(s.host), and \(s.host)-\(s.project)-<name> in the Claude apps.")
+            }
             .confirmationDialog("End \(s.title) on \(s.host)?", isPresented: $confirmEnd, titleVisibility: .visible) {
                 Button("End Session", role: .destructive) { Task { await model.endSession(s); dismiss() } }
             } message: {

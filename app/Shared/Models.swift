@@ -250,6 +250,11 @@ extension Session {
     /// "MyApp" for the main session, "MyApp · review" for a named one.
     var title: String { name == "main" ? project : "\(project) · \(name)" }
 
+    /// `session_name` in the CLI: "<project>-<task>" with . and : as _.
+    static func sessionName(project: String, task: String) -> String {
+        (project + "-" + task).replacingOccurrences(of: ".", with: "_").replacingOccurrences(of: ":", with: "_")
+    }
+
     /// The model family: "FABLE" from "Fable 5.1", "OPUS" from "Claude Opus 5";
     /// nil without a snapshot. Picks the tag colour; `modelTag` adds the version.
     var modelFamily: String? {

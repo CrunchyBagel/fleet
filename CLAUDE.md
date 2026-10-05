@@ -126,7 +126,7 @@ whoever runs it.
   fast-forwarding, opening) as dim lines; the app streams those into the
   session view while the button is busy.
 - Commands: `ls` (default), `attach|a`, `open|o`, `new|n`, `projects|p`,
-  `models`, `claude`, `shell`, `kill|stop`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models`, `claude`, `shell`, `kill|stop`, `rename`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
   `models [host] [--json]` (`models_local` on the host) = what Claude Code
   there can start with: `{default, models: [{id, name, short_name,
   section}]}` plus `host` in the `--json` form. There is no `claude models`;
@@ -177,6 +177,17 @@ whoever runs it.
   registry entry when the session is in the repo itself (a worktree row
   stays, idle, until `reap`). Without `-y` it asks on a tty and refuses
   otherwise. Only sessions `fleet status` lists can be killed.
+  `rename <host> <session> <name>` (`rename --local` on the host) makes a
+  session in the repo itself `<project>-<name>`: `tmux rename-session`, its
+  registry entry and state/stats/handoff files, then, when the pane runs an
+  agent between turns (not running, blocked only on `idle_prompt`), types
+  `/rename <FLEET_SELF>-<session>` into it so the Claude apps follow;
+  otherwise it says to do that by hand (the apps put that line in the
+  banner). Worktree sessions are refused (status derives their session from
+  the worktree's name), as are a live move and a name already taken.
+  Claude Code's `~/.claude/sessions/<pid>.json` keeps the tmux name it
+  started under, so `claude_session_id` matches it on the session's panes
+  (`:@window.%pane`) and on the name only when tmux lists none.
   `move [-y] [--no-attach] [--model m] <host> <session> [target]` moves a
   fleet session to another Mac (spec
   `docs/superpowers/specs/2026-09-24-session-move-design.md`). It is refused
@@ -230,7 +241,9 @@ whoever runs it.
   project pattern. It runs `fleet projects
   --local` on that host (folders under FLEET_ROOT, ranked CLAUDE.md/.claude
   first, then worktrees/container, plain, dir), picks with fzf, and runs
-  `fleet new --local <project> [task]` there. No task = session `<project>-main`
+  `fleet new --local <project> [task]` there. It refuses a session name that is
+  already running there (never reattaches: that is `attach`; tmux names are
+  matched exactly with `=`, since `-t` alone takes a prefix). No task = session `<project>-main`
   in the repo. With a task: plain project = another named session in the same
   repo (`<project>-<task>`, no worktree); converted project = a worktree.
   `status` emits one row per registered session for the primary repo (field
@@ -453,6 +466,10 @@ whoever runs it.
   Update fleet button streaming `fleet install <host>`. The New-session sheet
   says so when the host lists no project at all (FLEET_ROOT wrong there).
   A session's End button (and menu items) confirm, then `fleet kill -y`.
+  Rename… (context menu, Session menu, the pencil by a session's title; not
+  for worktree sessions) is an alert with a name field, then `fleet rename`;
+  the selection follows the new id. The iOS session screen has Rename too
+  (`rename --local` on the host, then back to the overview).
   A session's Move menu (and "Move To" in its context menu) lists `fleet
   move --targets` for it, loaded when its screen shows and when its
   movability changes; it stays enabled (only not while busy) and, when

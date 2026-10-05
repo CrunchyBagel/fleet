@@ -18,6 +18,12 @@ struct SessionView: View {
                 StateDot(session: session).scaleEffect(1.5)
                 Text(session.title).font(.title).bold()
                 Text("on \(session.host)").font(.title3).foregroundStyle(.secondary)
+                if !session.worktree {   // a worktree session's name is its worktree's
+                    Button { model.renaming = session } label: { Image(systemName: "pencil") }
+                        .buttonStyle(.borderless).foregroundStyle(.secondary)
+                        .disabled(model.busy[session.id] != nil)
+                        .help("Rename this session, in fleet and in the Claude apps")
+                }
                 Spacer()
                 Text(session.badgeWithWait).foregroundStyle(session.dotColor).font(.headline)
             }

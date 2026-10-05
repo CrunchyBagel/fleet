@@ -5,6 +5,7 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var collapsed: Set<String> = []      // machines the user folded; everything starts expanded
     @State private var query = ""                        // sidebar search (⌘F)
+    @State private var renameText = ""                   // the Rename dialog's field
 
     func expanded(_ host: String) -> Binding<Bool> {
         Binding(get: { !collapsed.contains(host) },
@@ -93,6 +94,21 @@ struct ContentView: View {
                  ? "The agent is asked to exit (a running turn is interrupted), then the tmux session is closed. The worktree and its branch stay; fleet reap removes it once merged."
                  : "The agent is asked to exit (a running turn is interrupted), then the tmux session is closed. Uncommitted work in the checkout is untouched.")
         }
+        .alert(
+            "Rename \(model.renaming?.title ?? "")",
+            isPresented: Binding(get: { model.renaming != nil }, set: { if !$0 { model.renaming = nil } }),
+            presenting: model.renaming
+        ) { s in
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                let n = renameText.trimmingCharacters(in: .whitespaces)
+                if !n.isEmpty && n != s.name { model.renameSession(s, to: n) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { s in
+            Text("It becomes \(s.project)-<name> on \(s.host), and \(s.host)-\(s.project)-<name> in the Claude apps.")
+        }
+        .onChange(of: model.renaming?.id) { _, _ in renameText = model.renaming.map { $0.name == "main" ? "" : $0.name } ?? "" }
         .confirmationDialog(
             "Move \(model.confirmMove?.session.title ?? "") to \(model.confirmMove?.target ?? "")?",
             isPresented: Binding(get: { model.confirmMove != nil }, set: { if !$0 { model.confirmMove = nil } }),
@@ -171,6 +187,8 @@ struct SessionMenu: View {
         }
         .disabled(model.busy[session.id] != nil)
         Divider()
+        Button("Rename…") { model.renaming = session }
+            .disabled(session.worktree || model.busy[session.id] != nil)
         Button("End Session…") { model.confirmEnd = session }
     }
 }

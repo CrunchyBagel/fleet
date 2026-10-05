@@ -116,6 +116,20 @@ final class MobileModel: ObservableObject {
         } catch { self.error = "new: \(error.localizedDescription)"; return nil }
     }
 
+    /// `fleet rename --local` on the session's host: it becomes
+    /// <project>-<name> there and in the Claude apps. fleet's note when the
+    /// agent was busy (its Claude Code name is unchanged) goes to the banner.
+    func renameSession(_ s: Session, to name: String) async {
+        busy = "Renaming \(s.title)…"; defer { busy = nil }
+        do {
+            let out = try await ssh().fleet(on: s.host, ["rename", "--local", s.session, name], timeout: .seconds(30))
+            if let note = out.split(separator: "\n").first(where: { $0.contains("/rename") }) {
+                self.error = note.trimmingCharacters(in: .whitespaces)
+            }
+            await refresh(host: s.host)
+        } catch { self.error = "rename: \(error.localizedDescription)" }
+    }
+
     func endSession(_ s: Session) async {
         busy = "Ending \(s.title): asking the agent to exit…"; defer { busy = nil }
         do { _ = try await ssh().fleet(on: s.host, ["kill", "--local", s.session], timeout: .seconds(30)); await refresh(host: s.host) }
@@ -141,13 +155,6 @@ final class MobileModel: ObservableObject {
     }
 
     func resetConnections() { Task { await runner?.disconnectAll() } }
-}
-
-extension Session {
-    /// `session_name` in the CLI: "<project>-<task>" with . and : as _.
-    static func sessionName(project: String, task: String) -> String {
-        (project + "-" + task).replacingOccurrences(of: ".", with: "_").replacingOccurrences(of: ":", with: "_")
-    }
 }
 
 extension HostInfo {

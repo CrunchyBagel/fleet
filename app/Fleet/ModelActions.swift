@@ -89,6 +89,27 @@ extension FleetModel {
             refresh()
         }
     }
+    /// After the Rename dialog: the session becomes <project>-<name> for
+    /// fleet and the Claude apps, and stays selected under its new id. When
+    /// the agent was busy fleet renames only its own side and says so; that
+    /// line goes to the banner, since the Claude apps still show the old name.
+    func renameSession(_ s: Session, to name: String) {
+        let id = s.id, newID = "\(s.host)/\(Session.sessionName(project: s.project, task: name))"
+        actionError = nil
+        busy[id] = "Renaming \(s.title)…"
+        Task {
+            do {
+                let out = try await FleetCLI.rename(host: s.host, session: s.session, to: name)
+                if let note = out.split(separator: "\n").first(where: { $0.contains("/rename") }) {
+                    actionError = note.trimmingCharacters(in: .whitespaces)
+                }
+                moveTargets[id] = nil
+                if selected == .session(id) { selected = .session(newID) }
+            } catch { actionError = "rename \(s.title): \(Self.reason(error))" }
+            busy[id] = nil
+            refresh()
+        }
+    }
     /// Which Macs can take a session; the Move menus show the answer.
     func loadMoveTargets(_ s: Session) {
         let id = s.id

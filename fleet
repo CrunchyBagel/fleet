@@ -205,8 +205,15 @@ attached_from() {   # $1 session
 # claude.ai/code/<id> and the desktop app's claude://code/continue?session=
 # address. Prefer that; fall back to the local id; "" if the session is not
 # running or not in tmux.
+# The file's `tmux` is "<session>:@<window>.%<pane>" as it was when claude
+# started, so a session fleet rename renamed is found by its panes (ids are
+# unique on the tmux server); the name only when tmux lists none.
 claude_session_id() {   # $1 tmux session name
-  jq -r --arg t "$1:" 'select((.tmux // "") | startswith($t)) | .bridgeSessionId // .sessionId // empty' \
+  local panes
+  panes=$(tmux list-panes -s -t "=$1" -F ':#{window_id}.#{pane_id}' 2>/dev/null | grep '^:@' | tr '\n' ' ' || true)
+  jq -r --arg t "$1:" --arg p " $panes" '(.tmux // "") as $x
+      | select(if $p != " " then $x | test(":@") and ($p | contains(" " + ($x | sub("^[^:]*"; "")) + " ")) else $x | startswith($t) end)
+      | .bridgeSessionId // .sessionId // empty' \
     "$HOME"/.claude/sessions/*.json 2>/dev/null | head -1
   return 0
 }
@@ -958,6 +965,66 @@ kill_local() {   # $1 session
     [ -n "$repo" ] && [ "$(realdir "$dir")" = "$(realdir "$repo")" ] && rm -f "$f"
   fi
   printf 'ended %s\n' "$s"
+}
+
+# fleet rename <host> <session> <name>: the session becomes <project>-<name>
+# (session_name), for fleet and for the Claude apps: the tmux session, its
+# registry entry and state files here, and Claude Code's own name, typed into
+# the pane as `/rename <machine>-<session>` when the agent is between turns
+# (while it works or asks something, typing would land in its input, so
+# that is skipped and said). Sessions in the repo itself only: a worktree
+# session's name is its worktree's (status derives one from the other).
+cmd_rename() {
+  local sel host project name branch session path state worktree
+  if [ "${1:-}" = "--local" ]; then shift; rename_local "$@"; return 0; fi
+  [ $# -ge 3 ] && [ -n "$3" ] || die "usage: fleet rename <host> <session> <new name>"
+  sel=$(record_for "$1" "$2" "") || return 1
+  IFS=$'\t' read -r _ host project name branch session path state worktree _ <<< "$sel"
+  [ "$worktree" != true ] || die "$session works in a worktree; its name is the worktree's and can not change"
+  # shellcheck disable=SC2016  # the single quotes are for the remote shell
+  run_on "$host" "fleet rename --local $(shq "$session") $(shq "$3")" || die "fleet rename failed on $host"
+}
+rename_local() {   # <session> <new name>
+  local old="${1:-}" new_name="${2:-}" f project dir repo new owner ext
+  [ -n "$old" ] && [ -n "$new_name" ] || die "usage: fleet rename --local <session> <new name>"
+  f="$FLEET_SESSIONS/$old"
+  [ -e "$f" ] || die "$old is not a fleet session on $FLEET_SELF"
+  tmux has-session -t "=$old" 2>/dev/null || die "$old is not running on $FLEET_SELF"
+  dir=$(sed -n 1p "$f"); project=$(sed -n 2p "$f")
+  repo=$(project_repo "$project" 2>/dev/null) || repo=""
+  [ -n "$repo" ] && [ "$(realdir "$dir")" = "$(realdir "$repo")" ] \
+    || die "$old works in a worktree; its name is the worktree's and can not change"
+  new=$(session_name "$project" "$new_name")
+  [ "$new" != "$old" ] || die "$old already has that name"
+  if tmux has-session -t "=$new" 2>/dev/null || [ -e "$FLEET_SESSIONS/$new" ]; then
+    die "$new already exists on $FLEET_SELF"
+  fi
+  owner=$(cat "$FLEET_STATE/$old.handoff-pending" 2>/dev/null || true)
+  if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then die "$old is being moved; rename it once that is over"; fi
+  tmux rename-session -t "=$old" "$new" || die "tmux could not rename $old"
+  mv "$f" "$FLEET_SESSIONS/$new"
+  for ext in json stats.json handoff; do
+    [ ! -e "$FLEET_STATE/$old.$ext" ] || mv "$FLEET_STATE/$old.$ext" "$FLEET_STATE/$new.$ext"
+  done
+  rm -f "$FLEET_STATE/$old.handoff-pending"
+  printf 'renamed %s to %s\n' "$old" "$new"
+  case "$(pane_command "=$new:")" in
+    ""|sh|bash|zsh|fish|tmux) printf '%s  no agent in it: Claude Code starts under the new name next time fleet starts it%s\n' "$DIM" "$RESET"; return 0 ;;
+  esac
+  case "$(jq -r "$WAITING_FOR"' "\(.state // "") \(waiting_for)"' "$FLEET_STATE/$new.json" 2>/dev/null || true)" in
+    "running "*)
+      printf '%s  the agent is working, so its name in the Claude apps is unchanged; type /rename %s there%s\n' "$YELLOW" "$FLEET_SELF-$new" "$RESET"
+      return 0 ;;
+    "blocked idle_prompt") ;;                   # its turn is over
+    "blocked "*)
+      printf '%s  the agent is waiting on you, so its name in the Claude apps is unchanged; type /rename %s there%s\n' "$YELLOW" "$FLEET_SELF-$new" "$RESET"
+      return 0 ;;
+  esac
+  tmux send-keys -t "=$new:" C-u 2>/dev/null || true
+  tmux send-keys -t "=$new:" -l "/rename $FLEET_SELF-$new" 2>/dev/null || { printf '%s  could not type into %s%s\n' "$YELLOW" "$new" "$RESET"; return 0; }
+  sleep 0.3                                   # as move_ask: an Enter sent with the text can read as part of a paste
+  tmux send-keys -t "=$new:" Enter 2>/dev/null || true
+  printf '%s  Claude Code: %s%s\n' "$DIM" "$FLEET_SELF-$new" "$RESET"
 }
 
 # ---------------------------------------------------------------- move
@@ -1894,7 +1961,7 @@ brand_session() {
 
 # start_session <session> <dir> <project> [model] [first-prompt file]: the
 # tmux session in <dir> with claude typed into it (an existing session is
-# reused as it is), branded and registered. With a file, claude's first
+# reused as it is; `new` refuses one before getting here), branded and registered. With a file, claude's first
 # prompt is its text, read by the pane's shell and removed as it is read, so
 # a long note never passes through send-keys.
 start_session() {
@@ -1902,7 +1969,7 @@ start_session() {
   # `--` first: FLEET_CLAUDE_ARGS may end in an option whose value is optional
   # (--remote-control [name]), which would take the prompt as that value.
   [ -z "$first" ] || prompt=" -- \"\$(cat $(shq "$first"); rm -f $(shq "$first"))\""
-  if ! tmux has-session -t "$session" 2>/dev/null; then
+  if ! tmux has-session -t "=$session" 2>/dev/null; then
     # A shell with claude typed into it, not `claude` as the session command,
     # so the session (and the `attached` fallback state) outlives the agent.
     tmux new-session -d -s "$session" -c "$dir"
@@ -1931,15 +1998,20 @@ new_local() {
   need git; need tmux; need claude
   main=$(project_repo "$project") || die "no clone for $project under $FLEET_ROOT"
   layout=$(project_layout "$project")
-  if [ -z "$task" ]; then
-    dir="$main"; session=$(session_name "$project" main)
-  elif [ "$layout" = plain ]; then
+  session=$(session_name "$project" "${task:-main}")
+  # A live session of that name is someone's work: `new` never hands it back
+  # (that is `attach`). Its name inside Claude Code may differ (/rename), so
+  # an empty name landing in a renamed <project>-main was a silent surprise.
+  # `=` makes tmux match the name exactly, not as a prefix.
+  if tmux has-session -t "=$session" 2>/dev/null; then
+    die "$session is already running on $FLEET_SELF; give the new session another name (or fleet attach $FLEET_SELF $session)"
+  fi
+  if [ -z "$task" ] || [ "$layout" = plain ]; then
     # Plain project: a name is just another session in the same repo.
-    dir="$main"; session=$(session_name "$project" "$task")
+    dir="$main"
   else
     branch="${FLEET_BRANCH_PREFIX}${task}"
     dir=$(worktree_path "$project" "$task")
-    session=$(session_name "$project" "$task")
     git -C "$main" fetch origin --prune -q 2>/dev/null || true
     git -C "$main" worktree prune
     if [ ! -d "$dir" ]; then
@@ -3159,6 +3231,8 @@ fleet - Claude Code agent worktrees across your Macs
   fleet shell  [host] [dir]       a login shell on that Mac (in dir), here or in a FLEET_TERM window
   fleet kill [-y] <host> <session>
                                   end a session: its tmux session and the agent in it (-y: no prompt)
+  fleet rename <host> <session> <name>
+                                  the session becomes <project>-<name>, here and in the Claude apps
   fleet move [-y] [--no-attach] <host> <session> [target]
                                   move a session to another Mac: committed and pushed work only;
                                   the agent writes a handoff note, the new session starts with it
@@ -3212,6 +3286,7 @@ case "$cmd" in
   open|o)   cmd_open "$@" ;;
   shell)    cmd_shell "$@" ;;
   kill|stop) cmd_kill "$@" ;;
+  rename)   cmd_rename "$@" ;;
   move|mv)  cmd_move "$@" ;;
   new|n)    cmd_new "$@" ;;
   projects|p) cmd_projects "$@" ;;
