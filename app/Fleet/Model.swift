@@ -57,6 +57,8 @@ final class FleetModel: ObservableObject {
     @Published var hosts: HostsInfo = .init(hosts: [], down: [])
     @Published var projects: [String: [ProjectEntry]] = [:]   // per host, fetched when a New-session sheet opens
     @Published var models: [String: ModelsList] = [:]         // per host, same trigger; missing = still asking
+    @Published var icons: [String: NSImage] = [:]            // Session.projectKey -> its app icon, kept while the app runs
+    private var iconAsked: Set<String> = []                    // "projectKey host": each host is asked once per project
     @Published var lastError: String?               // from polling; clears itself on the next good refresh
     @Published var actionError: String?             // from a button; stays until dismissed or the next action
     @Published var busy: [String: String] = [:]      // session id -> what fleet is doing for it right now
@@ -150,6 +152,20 @@ final class FleetModel: ObservableObject {
     var selfHost: String? { hosts.hosts.first { $0.isSelf == true }?.host }
     func downReason(for host: String) -> String? { hosts.down.first { $0.host == host }?.reason }
     func sessions(on host: String) -> [Session] { sessions.filter { $0.host == host } }
+
+    /// Fetch the session's project icon from its host unless it is in hand.
+    /// A project is the same repo on every Mac, so one answer serves them
+    /// all; a host without one (no icon, no Xcode, an older fleet) is not
+    /// asked again, but another Mac with the same repo still may be.
+    func loadIcon(for s: Session) {
+        let key = s.projectKey
+        guard icons[key] == nil, iconAsked.insert(key + " " + s.host).inserted else { return }
+        Task {
+            if let data = await FleetCLI.icon(host: s.host, project: s.project), let image = NSImage(data: data) {
+                icons[key] = image
+            }
+        }
+    }
     var needsYou: Int { blocked.count }
     var usage: UsageLimits? {
         guard let s = sessions.filter({ $0.hasStats && (($0.limit5h ?? -1) >= 0 || ($0.limit7d ?? -1) >= 0) })

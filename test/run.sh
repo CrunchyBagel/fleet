@@ -480,6 +480,19 @@ assert_eq "models: settings.local wins"                 "$(run models --local | 
 assert_eq "models --json carries the host"              "$(run models --json | jq -r .host)" "laptop"
 assert_contains "models table marks the default"        "$(run models)" "default: opus"
 assert_contains "models on the remote"                  "$(run models studio --json)" '"host":"studio"'
+
+section "icon"
+# The app's largest light iOS image is the icon; a dark variant, a mac image
+# and a widget's AppIcon are not (garbage files: sips fails if one is picked).
+ICS="$T/root/plain/App/Assets.xcassets/AppIcon.appiconset"; mkdir -p "$ICS" "$T/root/plain/Widget/Assets.xcassets/AppIcon.appiconset"
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==' | base64 -d > "$ICS/ios.png"
+echo junk > "$ICS/dark.png"; echo junk > "$ICS/mac.png"; echo junk > "$T/root/plain/Widget/Assets.xcassets/AppIcon.appiconset/w.png"
+printf '{"images":[{"filename":"ios.png","idiom":"universal","platform":"ios","size":"1024x1024"},{"filename":"dark.png","idiom":"universal","platform":"ios","size":"1024x1024","appearances":[{"appearance":"luminosity","value":"dark"}]},{"filename":"mac.png","idiom":"mac","size":"512x512","scale":"2x"}]}' > "$ICS/Contents.json"
+printf '{"images":[{"filename":"w.png","idiom":"universal","size":"1024x1024"}]}' > "$T/root/plain/Widget/Assets.xcassets/AppIcon.appiconset/Contents.json"
+assert_eq "icon: the app's light iOS image as a PNG" "$(run icon plain | base64 -d | head -c 4 | tail -c 3)" "PNG"
+assert_false "icon: a project without one fails" run icon plainB
+assert_false "icon: a path is not a project" run icon --local ../root/plain
+rm -rf "$T/root/plain/App" "$T/root/plain/Widget"
 rm -f "$T/home/.claude/settings.local.json" "$T/home/.claude/settings.json"
 : > "$SHIM_LOG"
 run new laptop plain triage --no-attach --model claude-sonnet-5 >/dev/null

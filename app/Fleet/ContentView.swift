@@ -53,7 +53,7 @@ struct ContentView: View {
                         case .newSession(let h):
                             Button { model.newSessionOn = NewSessionTarget(host: h) } label: {
                                 HStack(spacing: 8) {     // same shape as SessionRow so it lines up
-                                    Image(systemName: "plus.circle").frame(width: 10)
+                                    Image(systemName: "plus.circle").frame(width: 28)
                                     Text("New session…")
                                 }
                                 .foregroundStyle(.secondary)
@@ -248,19 +248,28 @@ struct HostRow: View {
 struct SessionRow: View {
     let session: Session
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 8) {
-                StateDot(session: session)
-                Text(session.title)
-                Spacer()
-                ModelTag(session: session)
-                if !session.attachedFrom.isEmpty { Image(systemName: "rectangle.connected.to.line.below").foregroundStyle(.secondary).help("attached: \(session.attachedFrom.joined(separator: ", "))") }
+        HStack(spacing: 8) {
+            ProjectIcon(session: session)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    // The session's own name first, the project after it and the first to
+                    // give way: the icon already says which project it is.
+                    if session.name == "main" {
+                        Text(session.project).lineLimit(1)
+                    } else {
+                        Text(session.name).lineLimit(1).layoutPriority(1)
+                        Text(session.project).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    ModelTag(session: session)
+                    if !session.attachedFrom.isEmpty { Image(systemName: "rectangle.connected.to.line.below").foregroundStyle(.secondary).help("attached: \(session.attachedFrom.joined(separator: ", "))") }
+                }
+                // Always a second line: the List caches row heights, and a row that
+                // grows when a prompt first appears is drawn over its neighbour.
+                Text(session.doing ?? session.branch).font(.caption).lineLimit(1)
+                    .foregroundStyle(session.doing != nil && session.state == "blocked" ? Color.orange : Color.secondary)
             }
-            // Always a second line: the List caches row heights, and a row that
-            // grows when a prompt first appears is drawn over its neighbour.
-            Text(session.doing ?? session.branch).font(.caption).lineLimit(1)
-                .foregroundStyle(session.doing != nil && session.state == "blocked" ? Color.orange : Color.secondary)
-                .padding(.leading, 18)
         }
+        .help(session.title)
     }
 }

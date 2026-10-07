@@ -255,6 +255,58 @@ extension Session {
         (project + "-" + task).replacingOccurrences(of: ".", with: "_").replacingOccurrences(of: ":", with: "_")
     }
 
+    /// The repo the project is a clone of as "owner/name", lowercased, the
+    /// CLI's `repo_key`: the same on every Mac whatever the URL shape or the
+    /// folder the clone sits in. nil without an origin.
+    var repoKey: String? {
+        guard var r = remote, !r.isEmpty else { return nil }
+        while r.hasSuffix("/") { r.removeLast() }
+        if r.hasSuffix(".git") { r.removeLast(4) }
+        let parts = r.split(whereSeparator: { $0 == "/" || $0 == ":" }).suffix(2)
+        return parts.isEmpty ? nil : parts.joined(separator: "/").lowercased()
+    }
+    /// What the project is across Macs: its repo, else (no origin) its folder name.
+    var projectKey: String { repoKey ?? project.lowercased() }
+    /// Initials for a project without an app icon: "W" for Weather, "TL" for
+    /// TaskList, "TW" for Task-Widgets. From the repo's own name when
+    /// there is one, so the letters do not change with a Mac's folder name.
+    var projectInitials: String {
+        var base = project
+        if let r = remote, let last = r.split(whereSeparator: { $0 == "/" || $0 == ":" }).last {
+            base = last.hasSuffix(".git") ? String(last.dropLast(4)) : String(last)
+        }
+        var words: [String] = [], word = ""
+        var prev: Character?
+        for c in base {
+            if !(c.isLetter || c.isNumber) { if !word.isEmpty { words.append(word) }; word = ""; prev = nil; continue }
+            if c.isUppercase, let p = prev, p.isLowercase { words.append(word); word = "" }   // camelCase
+            word.append(c); prev = c
+        }
+        if !word.isEmpty { words.append(word) }
+        return words.prefix(2).compactMap { $0.first.map { String($0).uppercased() } }.joined()
+    }
+    /// One vibrant colour per project, from a stable hash of `projectKey`
+    /// (FNV-1a: Swift's own hashValue changes on every launch), so a project
+    /// keeps its colour on every Mac and every run.
+    var projectColor: Color {
+        var h: UInt32 = 2166136261
+        for b in projectKey.utf8 { h = (h ^ UInt32(b)) &* 16777619 }
+        return Self.projectPalette[Int(h % UInt32(Self.projectPalette.count))]
+    }
+    /// Saturated enough to read as an app icon, dark enough for white letters.
+    static let projectPalette: [Color] = [
+        Color(red: 0.93, green: 0.30, blue: 0.27),   // red
+        Color(red: 0.96, green: 0.49, blue: 0.09),   // orange
+        Color(red: 0.85, green: 0.62, blue: 0.00),   // amber
+        Color(red: 0.18, green: 0.68, blue: 0.33),   // green
+        Color(red: 0.05, green: 0.62, blue: 0.60),   // teal
+        Color(red: 0.10, green: 0.53, blue: 0.93),   // blue
+        Color(red: 0.33, green: 0.36, blue: 0.90),   // indigo
+        Color(red: 0.60, green: 0.33, blue: 0.88),   // purple
+        Color(red: 0.88, green: 0.24, blue: 0.62),   // pink
+        Color(red: 0.80, green: 0.22, blue: 0.40),   // raspberry
+    ]
+
     /// The model family: "FABLE" from "Fable 5.1", "OPUS" from "Claude Opus 5";
     /// nil without a snapshot. Picks the tag colour; `modelTag` adds the version.
     var modelFamily: String? {

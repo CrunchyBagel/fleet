@@ -184,6 +184,12 @@ struct FleetCLI {
     static func models(on host: String) async -> ModelsList {
         (try? await decode(ModelsList.self, from: run(["models", host, "--json"]))) ?? .unknown
     }
+    /// `fleet icon <host> <project>`: the project's app icon there, PNG data.
+    /// nil when it has none, the host is down or runs a fleet without `icon`.
+    static func icon(host: String, project: String) async -> Data? {
+        guard let out = try? await run(["icon", host, project], timeout: pollTimeout) else { return nil }
+        return Data(base64Encoded: out.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
 
     // The actions. Attach goes through FLEET_TERM: fleet raises that terminal's
     // window for the session if one is open, else opens a new one.

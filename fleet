@@ -1381,6 +1381,62 @@ cmd_projects() {   # fleet projects [host] [--all] [--json]; --all includes fold
         { printf "%s%-28s%s %-7s %s\n", ($3=="yes"?B:""), $1, R, $2, ($3=="yes"?"yes":D "no" R) }'
 }
 
+# icon_find <repo> <project> -> the project's app icon: an Icon Composer
+# `.icon` bundle or an asset catalog's `.appiconset`. The one named after the
+# project (MyApp.icon) first, then AppIcon, then any; watch, widget and
+# extension icons after the app's; shallowest first; `.icon` before
+# `.appiconset` (the newer of the two). Nothing when there is none.
+icon_find() {
+  find "$1" -maxdepth 6 \( -name .git -o -name .build -o -name Pods -o -name Carthage -o -name node_modules \
+      -o -name .claude -o -name DerivedData \) -prune -o \( -name '*.icon' -o -name '*.appiconset' \) -type d -print 2>/dev/null \
+    | awk -v want="$2" '{
+        n = $0; sub(/.*\//, "", n); sub(/\.(icon|appiconset)$/, "", n)
+        r = (tolower(n) == tolower(want)) ? 0 : (n == "AppIcon" ? 1 : 2)
+        if (tolower($0) ~ /watch|widget|extension|clip|test/) r += 3
+        p = $0; d = gsub(/\//, "", p)
+        printf "%d\t%03d\t%d\t%s\n", r, d, ($0 ~ /\.icon$/ ? 0 : 1), $0 }' \
+    | sort | head -1 | cut -f4-
+}
+
+# icon_local <project>: its app icon as a full-bleed ICON_PX square PNG,
+# base64 on one line (the Mac app's sidebar draws it; the app rounds the
+# corners). A `.icon` is compiled by actool for iOS, which renders it without
+# the macOS shape and padding, so it needs Xcode; an appiconset gives its
+# largest image that is not a dark/tinted variant, iOS before mac (mac images
+# carry their own padding). Fails with no output when there is none.
+ICON_PX=120
+icon_local() {
+  local repo src tmp f=""
+  case "$1" in ''|*/*|.|..) return 1 ;; esac
+  repo=$(project_repo "$1") || return 1
+  src=$(icon_find "$repo" "$1"); [ -n "$src" ] || return 1
+  tmp=$(mktemp -d)
+  trap 'rm -rf "${tmp:-}"' RETURN
+  case "$src" in
+    *.icon)
+      xcrun actool "$src" --compile "$tmp" --platform iphoneos --minimum-deployment-target 17.0 \
+        --app-icon "$(basename "$src" .icon)" --output-partial-info-plist "$tmp/info.plist" >/dev/null 2>&1 || return 1
+      for f in "$tmp"/*60x60@2x.png; do break; done ;;
+    *)
+      f=$(jq -r '[.images[]? | select(.filename != null and .appearances == null)
+          | {f: .filename, mac: (.idiom == "mac"),
+             px: (((.size // "0x0") | split("x")[0] | tonumber? // 0) * ((.scale // "1x") | rtrimstr("x") | tonumber? // 1))}]
+          | sort_by(.mac, -.px) | .[0].f // empty' "$src/Contents.json" 2>/dev/null) || f=""
+      [ -z "$f" ] || f="$src/$f" ;;
+  esac
+  [ -n "$f" ] && [ -f "$f" ] || return 1
+  sips -s format png -Z "$ICON_PX" "$f" --out "$tmp/icon.png" >/dev/null 2>&1 || return 1
+  base64 < "$tmp/icon.png" | tr -d '\n'; echo
+}
+
+cmd_icon() {   # fleet icon [host] <project>: the project's app icon there, a base64 PNG; exit 1 when none
+  if [ "${1:-}" = --local ]; then icon_local "${2:-}" || exit 1; return 0; fi
+  local host="$FLEET_SELF"
+  if [ $# -ge 2 ]; then host="$1"; shift; fi
+  [ -n "${1:-}" ] || die "usage: fleet icon [host] <project>"
+  run_on "$host" "fleet icon --local $(shq "$1")"
+}
+
 # The models Claude Code on THIS machine can start with, and the one it starts
 # with when not told: JSON {"default": id|"", "models": [{id, name, short_name,
 # section}]}. There is no `claude models`; the list is the model catalog Claude
@@ -3243,6 +3299,7 @@ fleet - Claude Code agent worktrees across your Macs
                                   it; a name adds a session there, or a worktree once converted;
                                   --model: which Claude model (default: Claude Code's own choice)
   fleet models [host] [--json]    the models Claude Code there can start with, and its default
+  fleet icon [host] <project>     that project's app icon there, as a base64 PNG (for the app)
   fleet claude [--json] [--diff] [--kind <kind>[,<kind>...]] [host...]
                                   how the Claude Code setup (plugins, MCP servers, settings,
                                   permission rules, CLAUDE.md, scripts) differs across the Macs
@@ -3291,6 +3348,7 @@ case "$cmd" in
   new|n)    cmd_new "$@" ;;
   projects|p) cmd_projects "$@" ;;
   models)   cmd_models "$@" ;;
+  icon)     cmd_icon "$@" ;;
   claude)   cmd_claude "$@" ;;
   convert)  cmd_convert "$@" ;;
   reap)     cmd_reap ;;

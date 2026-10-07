@@ -18,6 +18,7 @@ fleet new [host] [project] [name]     start a session there; a name adds a sessi
                                       (--model <m>: which Claude model; default: Claude Code's choice)
 fleet projects [host] [--json]        repos under FLEET_ROOT there
 fleet models [host] [--json]          the models Claude Code there can start with, and its default
+fleet icon [host] <project>           that project's app icon there, a base64 PNG (for the app)
 fleet convert <project>               enable worktrees for a clone (on that Mac)
 fleet reap                            remove worktrees with nothing beyond the default branch
 fleet hosts [add [alias]|rm <alias>]  the host list, pushed to every Mac

@@ -22,6 +22,36 @@ struct StateDot: View {
     }
 }
 
+/// The project's app icon (`fleet icon`), else its initials on its own
+/// colour, both rounded like an app icon, with the state dot on its corner.
+struct ProjectIcon: View {
+    @EnvironmentObject var model: FleetModel
+    let session: Session
+    var size: CGFloat = 28
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
+        Group {
+            if let image = model.icons[session.projectKey] {
+                Image(nsImage: image).resizable().interpolation(.high)
+            } else {
+                shape.fill(session.projectColor.gradient)
+                    .overlay(Text(session.projectInitials)
+                        .font(.system(size: size * (session.projectInitials.count > 1 ? 0.4 : 0.5), weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
+        .overlay(alignment: .bottomTrailing) {
+            StateDot(session: session)
+                .background(Circle().fill(Color(nsColor: .windowBackgroundColor)).padding(-2))
+                .offset(x: 3, y: 3)
+        }
+        .task(id: session.projectKey) { model.loadIcon(for: session) }
+    }
+}
+
 /// A small capsule with the model ("OPUS 5.5"), coloured per family, so a
 /// costly model stands out in the sidebar. Nothing when there is no snapshot.
 struct ModelTag: View {

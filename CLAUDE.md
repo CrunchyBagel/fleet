@@ -126,7 +126,13 @@ whoever runs it.
   fast-forwarding, opening) as dim lines; the app streams those into the
   session view while the button is busy.
 - Commands: `ls` (default), `attach|a`, `open|o`, `new|n`, `projects|p`,
-  `models`, `claude`, `shell`, `kill|stop`, `rename`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models`, `icon`, `claude`, `shell`, `kill|stop`, `rename`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `icon [host] <project>` (`icon_local` there) = the project's app icon as
+  a base64 120px full-bleed PNG, exit 1 when none: `icon_find` picks the
+  `.icon` or `.appiconset` named after the project, else AppIcon, else any,
+  watch/widget/extension ones last, shallowest first; a `.icon` is compiled
+  by `xcrun actool --platform iphoneos` (needs Xcode), an appiconset gives
+  its largest image that is not a dark/tinted variant, iOS before mac.
   `models [host] [--json]` (`models_local` on the host) = what Claude Code
   there can start with: `{default, models: [{id, name, short_name,
   section}]}` plus `host` in the `--json` form. There is no `claude models`;
@@ -383,7 +389,15 @@ whoever runs it.
   whenever rows around it come or go, a stale copy drawn over its
   neighbour, and neither an `.id` on the group nor disabling animations
   stops it; to reproduce, poll a stand-in whose session set changes with a
-  session selected (`FLEET_SELECT=host/session`). Every row two lines
+  session selected (`FLEET_SELECT=host/session`). Each session row
+  starts with its project's icon (`ProjectIcon`: `fleet icon` from the
+  session's host, cached for the app's lifetime per `Session.projectKey`,
+  the origin's `repo_key` else the folder name, each host asked once;
+  without one, `projectInitials` on `projectColor`, an FNV-1a hash of
+  `projectKey` into a fixed palette, so a project looks the same on every
+  Mac whatever its folder is called) with the state dot on its corner,
+  then the session's name with the project after it in secondary text
+  (the first to truncate; a main session shows just the project). Every row two lines
   (the second the note/prompt else the branch: the List caches row heights,
   and a row that grows later is drawn over its neighbour), with how long a
   blocked one has waited, searchable (⌘F, project/
