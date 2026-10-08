@@ -237,13 +237,17 @@ history_dirs() {   # $1 primary clone
 }
 # Conversations open in a running Claude Code: ~/.claude/sessions/<pid>.json
 # with a live pid. A crash or a power cut leaves the file behind, and that
-# is when resuming matters, so the pid decides.
+# is when resuming matters, so the pid decides; after a restart the pid may
+# belong to something else, so its start time must be the file's procStart
+# (ps lstart in UTC, the same text) when the file has one.
 claude_live_ids() {
-  local f pid
+  local f pid start
   for f in "$HOME"/.claude/sessions/*.json; do
     [ -f "$f" ] || continue
     pid=$(basename "$f" .json)
     kill -0 "$pid" 2>/dev/null || continue
+    start=$(jq -r '.procStart // empty' "$f" 2>/dev/null || true)
+    if [ -n "$start" ] && [ "$(LC_ALL=C TZ=UTC ps -o lstart= -p "$pid" 2>/dev/null | sed 's/ *$//')" != "$start" ]; then continue; fi
     jq -r '.sessionId // empty' "$f" 2>/dev/null || true
   done
   return 0
@@ -268,7 +272,9 @@ history_local() {
         printf '%s\t%s\t%s\n' "$(stat -f %m "$f")" "$d" "$f"
       done
     done | sort -rn | while IFS=$'\t' read -r ts d f; do
-      [ "$n" -lt "$HISTORY_MAX" ] || break
+      # Past the cap the rest is read and dropped, not cut off: a reader that
+      # leaves early kills sort with SIGPIPE, which pipefail makes our exit status.
+      [ "$n" -lt "$HISTORY_MAX" ] || continue
       id=$(basename "$f" .jsonl)
       case "$live" in *" $id "*) continue ;; esac
       wt=""; [ "$(cd "$d" && pwd -P)" = "$mainp" ] || wt=$(basename "$d")
@@ -2280,10 +2286,12 @@ cmd_new() {
       is_uuid "$resume" || die "$resume is not a conversation id   (fleet history $host $project)"
     fi
     # The session's name: the one given, else the conversation's (its
-    # worktree's), else main. Asked for by id so the 20 cap does not apply.
-    if [ -z "$task" ]; then
-      task=$(run_on "$host" "fleet history --local $(shq "$project") $(shq "$resume")" 2>/dev/null | jq -r '.[0].name // ""' 2>/dev/null) || task=""
-    fi
+    # worktree's), else main. Asked for by id so the 20 cap does not apply,
+    # and asked even with a name: a fleet there without history would take
+    # --resume for a session name.
+    a=$(run_on "$host" "fleet history --local $(shq "$project") $(shq "$resume")" 2>/dev/null) \
+      || die "could not look up conversation $resume on $host (is fleet up to date there? fleet update $host)"
+    [ -n "$task" ] || task=$(printf '%s' "$a" | jq -r '.[0].name // ""' 2>/dev/null) || task=""
   fi
   # Prompts only when interactive; --no-attach (wrapper apps) takes defaults.
   case "$kind" in

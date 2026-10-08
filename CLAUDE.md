@@ -151,8 +151,9 @@ whoever runs it.
   existing worktree, newest 20, `[{id, dir, name, title, prompt, ts}]`;
   name from a `<FLEET_SELF>-<session>` custom-title, a worktree's own
   name in a worktree, else `""`; the last `lastPrompt`; running ones
-  (`claude_live_ids`: a `~/.claude/sessions/<pid>.json` with a live pid,
-  since a power cut leaves the files) and stubs left out. Read-only.
+  (`claude_live_ids`: a `~/.claude/sessions/<pid>.json` with a live pid
+  whose `ps lstart` in UTC is its `procStart`, since a power cut leaves
+  the files and a restart reuses pids) and stubs left out. Read-only.
   `claude [--json] [--diff] [--kind k,...] [host...]` = how the Claude Code setup differs
   across the Macs, one row per item: `marketplace` (known_marketplaces.json),
   `plugin` (`enabledPlugins`, enabled/disabled), `mcp` (user-scope

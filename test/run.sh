@@ -1214,5 +1214,31 @@ assert_eq "new --resume finds one beyond the 20" "$(run new laptop histN --resum
 run new laptop '^hist ' --resume >/dev/null 2>&1
 assert_contains "new --resume with no id picks from the history" "$(cat "$SHIM_LOG")" "--resume '$U6'"
 
+# final review fixes
+# hundreds of transcripts: the loop that stops at 20 must not break the pipe feeding it
+git clone -q "$T/origins/alpha.git" "$T/root/histP"
+PK="$T/home/.claude/projects/$(printf '%s' "$T/root/histP" | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$PK"
+for i in $(seq 100 699); do printf '{"type":"last-prompt","lastPrompt":"p%s"}\n' "$i" > "$PK/bbbbbbbb-0000-0000-0000-000000000$i.jsonl"; done
+assert_eq "history of a project with hundreds of conversations works" "$(run history --local histP >/dev/null 2>&1; echo $?)" "0"
+assert_eq "  ...and gives 20"                   "$(run history --local histP | jq length)" "20"
+# a pid that was reused after the power cut: the start time says it is another process
+sleep 300 & SLEEPPID=$!
+printf '{"sessionId":"%s","procStart":"Thu Jan  1 00:00:00 2026"}\n' "$U1" > "$T/home/.claude/sessions/$SLEEPPID.json"
+assert_eq "a sessions file whose pid now runs something else does not hide it" \
+  "$(run history --local hist | jq -r --arg u "$U1" '[.[] | select(.id == $u)] | length')" "1"
+jq -nc --arg id "$U1" --arg s "$(LC_ALL=C TZ=UTC ps -o lstart= -p "$SLEEPPID" | sed 's/ *$//')" '{sessionId: $id, procStart: $s}' > "$T/home/.claude/sessions/$SLEEPPID.json"
+assert_eq "  ...one whose start time matches does" \
+  "$(run history --local hist | jq -r --arg u "$U1" '[.[] | select(.id == $u)] | length')" "0"
+kill "$SLEEPPID" 2>/dev/null; rm -f "$T/home/.claude/sessions/$SLEEPPID.json"
+# a host whose fleet has no history (older than --resume): refuse rather than misparse
+mv "$RH/bin/fleet" "$RH/bin/fleet.real"
+printf '#!/bin/bash\n[ "${1:-}" = history ] && { echo "fleet: unknown command" >&2; exit 1; }\nexec "%s" "$@"\n' "$FLEET" > "$RH/bin/fleet"; chmod +x "$RH/bin/fleet"
+assert_contains "new --resume on a host with an older fleet says to update it" \
+  "$(renv FLEET_HOSTS="laptop studio" -- new studio plainR --resume "$U1" --no-attach 2>&1)" "up to date there"
+assert_contains "  ...a named one too" \
+  "$(renv FLEET_HOSTS="laptop studio" -- new studio plainR x --resume "$U1" --no-attach 2>&1)" "up to date there"
+assert_false "  ...and starts nothing there"   test -e "$RH/.local/state/fleet/sessions/plainR---resume"
+rm "$RH/bin/fleet"; mv "$RH/bin/fleet.real" "$RH/bin/fleet"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
