@@ -1240,5 +1240,13 @@ assert_contains "  ...a named one too" \
 assert_false "  ...and starts nothing there"   test -e "$RH/.local/state/fleet/sessions/plainR---resume"
 rm "$RH/bin/fleet"; mv "$RH/bin/fleet.real" "$RH/bin/fleet"
 
+# a root with no symlink in it: fleet's path and git's are the same string, so
+# the clone is listed twice and both match (this exited silently on a real Mac)
+conv "$TR/root/hist" "$U8" 202609100900 "laptop-hist-real" "real path"
+for i in 1 2 3 4 5; do
+  assert_eq "new --resume where both clone paths match (try $i)" \
+    "$(renv FLEET_ROOT="$TR/root" -- new laptop hist --resume "$U8" --no-attach 2>&1 | cut -f2)" "hist-real"
+done
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

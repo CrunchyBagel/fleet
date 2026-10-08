@@ -2154,9 +2154,14 @@ new_local() {
     case " $(claude_live_ids | tr '\n' ' ') " in
       *" $resume "*) die "conversation $resume is open in a running Claude Code on $FLEET_SELF" ;;
     esac
+    # Every directory that has it, then the first. Not `| head -1`: the clone
+    # is listed twice (fleet's path and git's, the same string on a real
+    # Mac), both match, and head leaving early killed the loop with SIGPIPE,
+    # which pipefail and set -e made a silent exit.
     dir=$(history_dirs "$main" | while IFS= read -r d; do
             if [ -f "$HOME/.claude/projects/$(claude_dir_key "$d")/$resume.jsonl" ]; then printf '%s\n' "$d"; fi
-          done | head -1)
+          done)
+    dir=${dir%%$'\n'*}
     [ -n "$dir" ] || die "no conversation $resume for $project on $FLEET_SELF   (fleet history $FLEET_SELF $project)"
     if [ "$(cd "$dir" && pwd -P)" != "$(cd "$main" && pwd -P)" ]; then
       wt=$(basename "$dir")
