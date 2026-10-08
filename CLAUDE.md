@@ -259,15 +259,15 @@ whoever runs it.
   `fleet new --local <project> [task]` there. It refuses a session name that is
   already running there (never reattaches: that is `attach`; tmux names are
   matched exactly with `=`, since `-t` alone takes a prefix). No task = session `<project>-main`
-  in the repo.
+  in the repo. With a task: plain project = another named session in the same
+  repo (`<project>-<task>`, no worktree); converted project = a worktree.
   `--resume [id]` (an id from `fleet history`; none = an fzf of them,
   interactive only) starts the session with `claude … --resume <id>` in
   the directory the conversation ran in (`new_local` finds the transcript
   among `history_dirs`; never a new worktree), named by the task given,
   else the conversation's name (`history --local <project> <id>`), else
   main; a worktree conversation always takes the worktree's name. Ids
-  are UUID-checked (`is_uuid`); a running conversation is refused. With a task: plain project = another named session in the same
-  repo (`<project>-<task>`, no worktree); converted project = a worktree.
+  are UUID-checked (`is_uuid`); a running conversation is refused.
   `status` emits one row per registered session for the primary repo (field
   `worktree: false`) and one per worktree (`worktree: true`).
   `fleet convert <project>` is local-only by design. `attach`, `open`, `new`, `reap` are
