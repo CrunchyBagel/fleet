@@ -223,6 +223,8 @@ claude_session_id() {   # $1 tmux session name
 # letter or digit turned into "-". fleet only reads them, for `history` and
 # `new --resume`; a conversation resumes only on the Mac where it lives.
 claude_dir_key() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+# A Claude Code conversation id. --resume takes nothing else: it ends up in a path.
+is_uuid() { [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 # Where a project's conversations can be: its primary clone as fleet names it
 # (sessions start there, so that is the cwd Claude saw) and every worktree
 # that still exists, as git prints them (the clone again, resolved).
@@ -2099,13 +2101,14 @@ brand_session() {
   tmux set-option -q -t "$1" set-titles-string "#S · $2 · fleet" 2>/dev/null || true
 }
 
-# start_session <session> <dir> <project> [model] [first-prompt file]: the
+# start_session <session> <dir> <project> [model] [first-prompt file] [resume id]: the
 # tmux session in <dir> with claude typed into it (an existing session is
 # reused as it is; `new` refuses one before getting here), branded and registered. With a file, claude's first
 # prompt is its text, read by the pane's shell and removed as it is read, so
-# a long note never passes through send-keys.
+# a long note never passes through send-keys. With an id, claude resumes that
+# conversation (fleet new --resume).
 start_session() {
-  local session="$1" dir="$2" project="$3" model="${4:-}" first="${5:-}" prompt=""
+  local session="$1" dir="$2" project="$3" model="${4:-}" first="${5:-}" resume="${6:-}" prompt=""
   # `--` first: FLEET_CLAUDE_ARGS may end in an option whose value is optional
   # (--remote-control [name]), which would take the prompt as that value.
   [ -z "$first" ] || prompt=" -- \"\$(cat $(shq "$first"); rm -f $(shq "$first"))\""
@@ -2120,7 +2123,7 @@ start_session() {
     # app, --permission-mode auto starts it in auto mode. FLEET_CLAUDE_ARGS in
     # the config changes the flags per machine. --model only when asked
     # (fleet new --model), so Claude Code's own default applies otherwise.
-    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS${model:+ --model $(shq "$model")}$prompt" Enter
+    tmux send-keys -t "$session" "claude -n $(shq "$FLEET_SELF-$session") $FLEET_CLAUDE_ARGS${model:+ --model $(shq "$model")}${resume:+ --resume $(shq "$resume")}$prompt" Enter
   fi
   brand_session "$session" "$FLEET_SELF"
   register_session "$session" "$dir" "$project"
@@ -2133,11 +2136,28 @@ start_session() {
 #   new_local <project> <task>   worktree + branch agent/<task>; the project
 #                                must be converted (or in container layout)
 #   new_local <project> <task> <model>   ... and `claude --model <model>`
+#   new_local <project> [task] [model] <id>   resume conversation <id> where
+#                                it ran; in a worktree under the worktree's name
 new_local() {
-  local project="$1" task="${2:-}" model="${3:-}" main layout dir branch base session
+  local project="$1" task="${2:-}" model="${3:-}" resume="${4:-}" main layout dir="" branch base session wt d
   need git; need tmux; need claude
   main=$(project_repo "$project") || die "no clone for $project under $FLEET_ROOT"
   layout=$(project_layout "$project")
+  if [ -n "$resume" ]; then
+    is_uuid "$resume" || die "$resume is not a conversation id   (fleet history $FLEET_SELF $project)"
+    case " $(claude_live_ids | tr '\n' ' ') " in
+      *" $resume "*) die "conversation $resume is open in a running Claude Code on $FLEET_SELF" ;;
+    esac
+    dir=$(history_dirs "$main" | while IFS= read -r d; do
+            if [ -f "$HOME/.claude/projects/$(claude_dir_key "$d")/$resume.jsonl" ]; then printf '%s\n' "$d"; fi
+          done | head -1)
+    [ -n "$dir" ] || die "no conversation $resume for $project on $FLEET_SELF   (fleet history $FLEET_SELF $project)"
+    if [ "$(cd "$dir" && pwd -P)" != "$(cd "$main" && pwd -P)" ]; then
+      wt=$(basename "$dir")
+      [ -z "$task" ] || [ "$task" = "$wt" ] || die "that conversation is in the $wt worktree: it resumes as $(session_name "$project" "$wt")"
+      task="$wt"
+    fi
+  fi
   session=$(session_name "$project" "${task:-main}")
   # A live session of that name is someone's work: `new` never hands it back
   # (that is `attach`). Its name inside Claude Code may differ (/rename), so
@@ -2146,7 +2166,9 @@ new_local() {
   if tmux has-session -t "=$session" 2>/dev/null; then
     die "$session is already running on $FLEET_SELF; give the new session another name (or fleet attach $FLEET_SELF $session)"
   fi
-  if [ -z "$task" ] || [ "$layout" = plain ]; then
+  if [ -n "$dir" ]; then
+    :   # resuming: where the conversation ran, never a new worktree
+  elif [ -z "$task" ] || [ "$layout" = plain ]; then
     # Plain project: a name is just another session in the same repo.
     dir="$main"
   else
@@ -2164,7 +2186,7 @@ new_local() {
       fi
     fi
   fi
-  start_session "$session" "$dir" "$project" "$model"
+  start_session "$session" "$dir" "$project" "$model" "" "$resume"
   printf '%s\n' "$dir"
 }
 
@@ -2176,21 +2198,29 @@ new_local() {
 cmd_new() {
   # --model <m> anywhere (an alias like opus or a full id from `fleet models`):
   # the model the new session starts with; without it Claude Code picks.
-  local model="" rest=() want=0 a
+  # --resume [id] anywhere: pick up that Claude Code conversation (fleet
+  # history lists them); without an id, choose it after the project.
+  local model="" resume="" rest=() want=0 wantr=0 a
   for a in "$@"; do
     if [ "$want" = 1 ]; then model="$a"; want=0; continue; fi
-    case "$a" in --model) want=1 ;; --model=*) model="${a#--model=}" ;; *) rest+=("$a") ;; esac
+    if [ "$wantr" = 1 ]; then wantr=0; if is_uuid "$a"; then resume="$a"; continue; fi; fi
+    case "$a" in
+      --model) want=1 ;; --model=*) model="${a#--model=}" ;;
+      --resume) resume=pick; wantr=1 ;; --resume=*) resume="${a#--resume=}" ;;
+      *) rest+=("$a") ;;
+    esac
   done
   [ "$want" = 0 ] || die "--model needs a value (fleet models lists them)"
   set -- ${rest[@]+"${rest[@]}"}
   if [ "${1:-}" = "--local" ]; then
     shift
-    [ -n "${1:-}" ] || die "usage: fleet new --local <project> [task] [--init] [--model <m>]"
+    [ -n "${1:-}" ] || die "usage: fleet new --local <project> [task] [--init] [--model <m>] [--resume <id>]"
     case " $* " in *" --init "*)
       [ -e "$FLEET_ROOT/$1/.git" ] || git -C "$FLEET_ROOT/$1" init -q >/dev/null 2>&1 || die "git init failed in $FLEET_ROOT/$1" ;;
     esac
     set -- "${@/--init/}"
-    new_local "$1" "${2:-}" "$model"
+    [ "$resume" != pick ] || die "--resume needs a conversation id here   (fleet history $FLEET_SELF $1)"
+    new_local "$1" "${2:-}" "$model" "$resume"
     return 0
   fi
   # fleet new [host] [project] [task]: a first argument that is a known host
@@ -2234,6 +2264,27 @@ cmd_new() {
           --header="$(pad "project on $host" 28)  $(pad layout 9)  claude   (plain = works directly in the repo; worktrees = fleet convert done; dir = not a repo yet)") || return 1
   [ -n "$sel" ] || return 1
   IFS=$'\t' read -r _ project kind <<< "$sel"
+  if [ -n "$resume" ]; then
+    [ "$resume" != pick ] || [ "$noattach" != 1 ] || die "fleet new --no-attach --resume needs a conversation id   (fleet history $host $project)"
+    if [ "$resume" = pick ]; then
+      list=$(run_on "$host" "fleet history --local $(shq "$project")") || die "could not list conversations for $project on $host (is fleet up to date there?)"
+      [ "$(printf '%s' "$list" | jq 'length')" -gt 0 ] || die "no conversations to resume for $project on $host"
+      resume=$(printf '%s\n' "$list" | jq -r '.[] | [(if .name != "" then .name elif .title != "" then .title else "-" end), (.ts | tostring), .id, .prompt] | @tsv' \
+        | while IFS=$'\t' read -r a b id c; do
+            printf '%s  %s  %s\t%s\n' "$(pad "$a" 20)" "$(pad "$(reltime "$b")" 9)" "${c:0:80}" "$id"
+          done \
+        | fzf --delimiter='\t' --with-nth=1 --height=40% --reverse --header="conversation to resume in $project on $host" \
+        | cut -f2) || return 1
+      [ -n "$resume" ] || return 1
+    else
+      is_uuid "$resume" || die "$resume is not a conversation id   (fleet history $host $project)"
+    fi
+    # The session's name: the one given, else the conversation's (its
+    # worktree's), else main. Asked for by id so the 20 cap does not apply.
+    if [ -z "$task" ]; then
+      task=$(run_on "$host" "fleet history --local $(shq "$project") $(shq "$resume")" 2>/dev/null | jq -r '.[0].name // ""' 2>/dev/null) || task=""
+    fi
+  fi
   # Prompts only when interactive; --no-attach (wrapper apps) takes defaults.
   case "$kind" in
     dir)
@@ -2246,18 +2297,18 @@ cmd_new() {
         read -r task </dev/tty
       fi ;;
     plain)
-      if [ -z "$task" ] && [ "$noattach" != 1 ]; then
+      if [ -z "$task" ] && [ "$noattach" != 1 ] && [ -z "$resume" ]; then
         printf 'session name (empty = main; several named sessions can share this repo): '
         read -r task </dev/tty
       fi ;;
     *)
-      if [ -z "$task" ] && [ "$noattach" != 1 ]; then
+      if [ -z "$task" ] && [ "$noattach" != 1 ] && [ -z "$resume" ]; then
         printf 'task name to work in a new worktree (branch %s<task>), or leave empty to work directly in the repo: ' "$FLEET_BRANCH_PREFIX"
         read -r task </dev/tty
       fi ;;
   esac
   # shellcheck disable=SC2016  # the single quotes are for the remote shell
-  dir=$(run_on "$host" "fleet new --local $(shq "$project")${task:+ $(shq "$task")}${init:+ $init}${model:+ --model $(shq "$model")}") || die "fleet new failed on $host"
+  dir=$(run_on "$host" "fleet new --local $(shq "$project")${task:+ $(shq "$task")}${init:+ $init}${model:+ --model $(shq "$model")}${resume:+ --resume $(shq "$resume")}") || die "fleet new failed on $host"
   if [ "$noattach" = 1 ]; then
     printf '%s\t%s\t%s\n' "$host" "$(session_name "$project" "${task:-main}")" "$dir"
     return 0
@@ -3378,10 +3429,11 @@ fleet - Claude Code agent worktrees across your Macs
                                   the agent writes a handoff note, the new session starts with it
   fleet move --targets <host> <session> [--json]
                                   which Macs can take that session, and why not
-  fleet new [host] [project] [task] [--all] [--no-attach] [--model <m>]
+  fleet new [host] [project] [task] [--all] [--no-attach] [--model <m>] [--resume [id]]
                                   pick a folder on that host (default: here) and start a session in
                                   it; a name adds a session there, or a worktree once converted;
-                                  --model: which Claude model (default: Claude Code's own choice)
+                                  --model: which Claude model (default: Claude Code's own choice);
+                                  --resume: pick up an earlier conversation (fleet history)
   fleet models [host] [--json]    the models Claude Code there can start with, and its default
   fleet history [host] <project> [--json]
                                   that project's earlier Claude Code conversations there,

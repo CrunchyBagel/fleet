@@ -1182,5 +1182,37 @@ RK="$RH/.claude/projects/$(printf '%s' "$T/rootR/plainR" | sed 's/[^A-Za-z0-9]/-
 jq -nc '{type: "last-prompt", lastPrompt: "on studio"}' > "$RK/$U1.jsonl"
 assert_eq "history on another host"                "$(renv FLEET_HOSTS="laptop studio" -- history studio plainR --json | jq -r '.[0].prompt')" "on studio"
 
+: > "$SHIM_LOG"
+assert_eq "new --resume: the conversation's name, in its directory" \
+  "$(run new laptop hist --resume "$U2" --no-attach)" "$(printf 'laptop\thist-review\t%s' "$T/root/hist")"
+assert_contains "  ...claude is told to resume it" "$(cat "$SHIM_LOG")" "--permission-mode auto --remote-control --resume '$U2'"
+assert_eq "  ...and it is registered there"   "$(sed -n 1p "$T/state/sessions/hist-review")" "$T/root/hist"
+assert_eq "new --resume with a name: that name" "$(run new laptop hist again --resume "$U2" --no-attach | cut -f2)" "hist-again"
+assert_eq "new --resume of an untitled one: main" "$(run new laptop hist --resume "$U3" --no-attach | cut -f2)" "hist-main"
+: > "$SHIM_LOG"
+run new laptop hist --model claude-sonnet-5 --resume "$U1" --no-attach >/dev/null
+assert_contains "--model and --resume together"  "$(cat "$SHIM_LOG")" "--model 'claude-sonnet-5' --resume '$U1'"
+assert_contains "new --resume refuses a running name" \
+  "$(renv "FAKE_TMUX_SESSIONS=plainR-main hist-review" -- new laptop hist --resume "$U2" --no-attach 2>&1)" "hist-review is already running"
+assert_contains "new --resume refuses an unknown id" "$(run new --local hist --resume 99999999-9999-9999-9999-999999999999 2>&1)" "no conversation 99999999-9999-9999-9999-999999999999 for hist"
+assert_contains "new --resume refuses a non-id"  "$(run new --local hist --resume=../../etc 2>&1)" "not a conversation id"
+assert_contains "new --resume refuses a running conversation" "$(run new --local hist --resume "$U5" 2>&1)" "open in a running Claude Code"
+assert_contains "new --local --resume needs an id" "$(run new --local hist --resume 2>&1)" "needs a conversation id"
+assert_contains "new --no-attach --resume needs an id" "$(run new laptop hist --resume --no-attach 2>&1)" "needs a conversation id"
+# worktrees
+assert_eq "new --resume of a worktree conversation: the worktree's session" \
+  "$(run new laptop histW --resume "$U7" --no-attach)" "$(printf 'laptop\thistW-ui\t%s' "$TR/root/histW/.claude/worktrees/ui")"
+assert_contains "  ...another name for it is refused" "$(run new laptop histW other --resume "$U7" --no-attach 2>&1)" "in the ui worktree"
+conv "$T/root/histW" "$U4" 202609090900 "laptop-histW-triage" "in the clone"
+assert_eq "new --resume of a clone conversation in a converted project stays in the clone" \
+  "$(run new laptop histW --resume "$U4" --no-attach)" "$(printf 'laptop\thistW-triage\t%s' "$T/root/histW")"
+assert_false "  ...no worktree made for it"      test -d "$T/root/histW/.claude/worktrees/triage"
+# older than the newest 20, by id
+assert_eq "new --resume finds one beyond the 20" "$(run new laptop histN --resume aaaaaaaa-0000-0000-0000-000000000010 --no-attach | cut -f2)" "histN-n10"
+# the picker: fzf (the shim) takes the first row, the newest
+: > "$SHIM_LOG"
+run new laptop '^hist ' --resume >/dev/null 2>&1
+assert_contains "new --resume with no id picks from the history" "$(cat "$SHIM_LOG")" "--resume '$U6'"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
