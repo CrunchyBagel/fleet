@@ -126,7 +126,7 @@ whoever runs it.
   fast-forwarding, opening) as dim lines; the app streams those into the
   session view while the button is busy.
 - Commands: `ls` (default), `attach|a`, `open|o`, `new|n`, `projects|p`,
-  `models`, `icon`, `claude`, `shell`, `kill|stop`, `rename`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
+  `models`, `history`, `icon`, `claude`, `shell`, `kill|stop`, `rename`, `move|mv`, `reap`, `hosts`, `keys`, `doctor`, `install|update`, `status`, `hook`.
   `icon [host] <project>` (`icon_local` there) = the project's app icon as
   a base64 120px full-bleed PNG, exit 1 when none: `icon_find` picks the
   `.icon` or `.appiconset` named after the project, else AppIcon, else any,
@@ -144,6 +144,15 @@ whoever runs it.
   unknown. `new ... --model <m>` (anywhere on the line, alias or id) appends
   `--model <m>` to the claude command; without it nothing is passed, so
   Claude Code's own default (including a `[1m]` variant) applies.
+  `history [host] <project> [--json]` (`history_local` there, `--local
+  <project> [id]`) = the conversations `fleet new --resume` can pick up:
+  Claude Code's transcripts `~/.claude/projects/<dir key>/<id>.jsonl`
+  (`claude_dir_key`: non-alphanumerics to `-`) for the clone and each
+  existing worktree, newest 20, `[{id, dir, name, title, prompt, ts}]`;
+  name from a `<FLEET_SELF>-<session>` custom-title, a worktree's own
+  name in a worktree, else `""`; the last `lastPrompt`; running ones
+  (`claude_live_ids`: a `~/.claude/sessions/<pid>.json` with a live pid,
+  since a power cut leaves the files) and stubs left out. Read-only.
   `claude [--json] [--diff] [--kind k,...] [host...]` = how the Claude Code setup differs
   across the Macs, one row per item: `marketplace` (known_marketplaces.json),
   `plugin` (`enabledPlugins`, enabled/disabled), `mcp` (user-scope
