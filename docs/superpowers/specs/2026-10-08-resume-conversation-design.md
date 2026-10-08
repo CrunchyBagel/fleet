@@ -66,8 +66,13 @@ worktrees (`WORKTREE_AWK`). A worktree that has been removed is not
 searched, so its conversations are not offered (claude resumes per working
 directory, and the directory is gone).
 
+A conversation in a worktree is named after the worktree whatever its
+title says, because `status` derives a worktree session's name from the
+worktree's directory name.
+
 Left out: conversations running now (their `sessionId` appears in a
-`~/.claude/sessions/*.json`), and transcripts with no `last-prompt` line
+`~/.claude/sessions/<pid>.json` whose pid is alive: a power cut leaves
+those files behind, and that is exactly when resuming matters), and transcripts with no `last-prompt` line
 (nothing was ever asked; Claude Code writes small stubs like that).
 
 ## CLI
@@ -77,6 +82,9 @@ Left out: conversations running now (their `sessionId` appears in a
 `history --local <project>` on the host (`history_local`), the newest 20
 conversations, newest first.
 
+- `history --local <project> <id>`: just that conversation, whatever its
+  age (the 20 cap does not apply), `[]` when there is none; `new --resume
+  <id>` uses it to learn the name.
 - `--json`: an array of `{id, dir, name, title, prompt, ts}`; `name` is
   `""` when the title is not fleet's shape; `prompt` clipped to 400 like the
   record's; `ts` the mtime epoch.
@@ -90,11 +98,16 @@ conversations, newest first.
   conversation; `--resume` with no id, interactive only, shows the
   project's history in fzf after the project is chosen and resumes the pick
   (`--no-attach` without an id is an error).
+- An id that is not UUID-shaped is refused before anything else (it ends
+  up in a path).
 - The name: the task given on the line, else the conversation's own name,
-  else `main`. The session-is-already-running refusal applies unchanged.
+  else `main`. A conversation in a worktree has the worktree's name; a
+  different task given for it is refused ("that conversation is in the ui
+  worktree: it resumes as <project>-ui"). The session-is-already-running refusal applies unchanged.
 - Sent to the host as `new --local <project> [task] --resume <id>`. There
   `new_local` looks the id up among the history directories above, and:
   - not found: die "no conversation <id> for <project> on <host>";
+  - running now (see above): die, it is open in another Claude Code;
   - found: the session starts in the transcript's directory, not the one
     the name would pick. In a converted project a conversation from the
     primary clone keeps running in the clone even under a non-main name;
