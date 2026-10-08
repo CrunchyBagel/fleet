@@ -218,6 +218,72 @@ claude_session_id() {   # $1 tmux session name
   return 0
 }
 
+# Claude Code's transcripts: ~/.claude/projects/<key>/<id>.jsonl, one per
+# conversation, <key> being the working directory with every character but a
+# letter or digit turned into "-". fleet only reads them, for `history` and
+# `new --resume`; a conversation resumes only on the Mac where it lives.
+claude_dir_key() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+# Where a project's conversations can be: its primary clone as fleet names it
+# (sessions start there, so that is the cwd Claude saw) and every worktree
+# that still exists, as git prints them (the clone again, resolved).
+history_dirs() {   # $1 primary clone
+  local d
+  printf '%s\n' "$1"
+  git -C "$1" worktree list --porcelain 2>/dev/null | awk "$WORKTREE_AWK" | cut -f1 \
+    | while IFS= read -r d; do if [ -d "$d" ]; then printf '%s\n' "$d"; fi; done
+  return 0
+}
+# Conversations open in a running Claude Code: ~/.claude/sessions/<pid>.json
+# with a live pid. A crash or a power cut leaves the file behind, and that
+# is when resuming matters, so the pid decides.
+claude_live_ids() {
+  local f pid
+  for f in "$HOME"/.claude/sessions/*.json; do
+    [ -f "$f" ] || continue
+    pid=$(basename "$f" .json)
+    kill -0 "$pid" 2>/dev/null || continue
+    jq -r '.sessionId // empty' "$f" 2>/dev/null || true
+  done
+  return 0
+}
+HISTORY_MAX=20
+# history_local <project> [id]: the project's conversations Claude Code can
+# resume, newest first, at most HISTORY_MAX (with an id: just that one, any
+# age), as [{id, dir, name, title, prompt, ts}]. name is the fleet session
+# part of a "<FLEET_SELF>-<session>" title (the -n label fleet gives), the
+# worktree's name for a conversation in a worktree, else "". Left out: the
+# running ones, and stubs with no prompt.
+history_local() {
+  local project="$1" want="${2:-}" main mainp pre live d f ts id wt n=0
+  main=$(project_repo "$project") || die "no clone for $project under $FLEET_ROOT"
+  mainp=$(cd "$main" && pwd -P)
+  pre="$FLEET_SELF-$(session_name "$project" x)"; pre=${pre%x}
+  live=" $(claude_live_ids | tr '\n' ' ') "
+  history_dirs "$main" | awk '!seen[$0]++' | while IFS= read -r d; do
+      for f in "$HOME/.claude/projects/$(claude_dir_key "$d")"/*.jsonl; do
+        [ -f "$f" ] || continue
+        [ -z "$want" ] || [ "$(basename "$f" .jsonl)" = "$want" ] || continue
+        printf '%s\t%s\t%s\n' "$(stat -f %m "$f")" "$d" "$f"
+      done
+    done | sort -rn | while IFS=$'\t' read -r ts d f; do
+      [ "$n" -lt "$HISTORY_MAX" ] || break
+      id=$(basename "$f" .jsonl)
+      case "$live" in *" $id "*) continue ;; esac
+      wt=""; [ "$(cd "$d" && pwd -P)" = "$mainp" ] || wt=$(basename "$d")
+      # Only rows that came out count towards the cap (a stub prints nothing).
+      if { grep -h -e '"custom-title"' -e '"lastPrompt"' "$f" 2>/dev/null || true; } \
+        | jq -Rnc --arg id "$id" --arg dir "$d" --arg wt "$wt" --arg pre "$pre" --argjson ts "$ts" '
+            [inputs | fromjson? // empty | objects] as $l
+            | ([$l[] | select(.type == "custom-title") | .customTitle // empty | strings] | last // "") as $t
+            | ([$l[] | select(.type == "last-prompt") | .lastPrompt // empty | strings] | last // "") as $p
+            | select($p != "")
+            | {id: $id, dir: $dir,
+               name: (if $wt != "" then $wt elif ($t | startswith($pre)) and ($t | length) > ($pre | length) then $t[($pre | length):] else "" end),
+               title: $t, prompt: $p[:400], ts: $ts}' \
+        | grep .; then n=$((n + 1)); fi
+    done | jq -sc 'unique_by(.id) | sort_by(-.ts)'
+}
+
 agent_state() {
   # State is written by Claude Code hooks via `fleet hook <state>`.
   # Falls back to tmux presence so it degrades gracefully, never guesses
@@ -1477,6 +1543,24 @@ cmd_models() {   # fleet models [host] [--json]: what Claude Code there can star
   printf '%s\n' "$out" | jq -r '.default as $d | (if $d == "" then "default: Claude Code decides" else "default: \($d)" end),
       (.models[] | [(if .id == $d then "*" else " " end), .id, .name, .section] | @tsv)' \
     | awk -F '\t' -v D="$DIM" -v R="$RESET" 'NR == 1 { print; next } { printf "%s %-28s %-12s %s%s%s\n", $1, $2, $3, D, $4, R }'
+}
+
+# fleet history [host] <project> [--json]: the conversations Claude Code there
+# has for the project, which `fleet new … --resume <id>` picks up again.
+cmd_history() {
+  if [ "${1:-}" = --local ]; then history_local "${2:-}" "${3:-}"; return 0; fi
+  local host="$FLEET_SELF" json=0 args=() a out label ts id p
+  for a in "$@"; do case "$a" in --json) json=1 ;; *) args+=("$a") ;; esac; done
+  set -- ${args[@]+"${args[@]}"}
+  if [ $# -ge 2 ]; then host="$1"; shift; fi
+  [ -n "${1:-}" ] || die "usage: fleet history [host] <project> [--json]"
+  out=$(run_on "$host" "fleet history --local $(shq "$1")") || die "could not list conversations for $1 on $host (fleet doctor $host; is fleet up to date there?)"
+  if [ "$json" = 1 ]; then printf '%s\n' "$out"; return 0; fi
+  [ "$(printf '%s' "$out" | jq 'length')" -gt 0 ] || { printf 'no conversations for %s on %s\n' "$1" "$host"; return 0; }
+  printf '%s\n' "$out" | jq -r '.[] | [(if .name != "" then .name elif .title != "" then .title else "-" end), (.ts | tostring), .id, .prompt] | @tsv' \
+    | while IFS=$'\t' read -r label ts id p; do
+        printf '%s  %s  %s  %s%s%s\n' "$(pad "$label" 20)" "$(pad "$(reltime "$ts")" 9)" "$id" "$DIM" "${p:0:60}" "$RESET"
+      done
 }
 
 # ---------------------------------------------------------------- claude setup
@@ -3299,6 +3383,9 @@ fleet - Claude Code agent worktrees across your Macs
                                   it; a name adds a session there, or a worktree once converted;
                                   --model: which Claude model (default: Claude Code's own choice)
   fleet models [host] [--json]    the models Claude Code there can start with, and its default
+  fleet history [host] <project> [--json]
+                                  that project's earlier Claude Code conversations there,
+                                  to pick up with fleet new … --resume <id>
   fleet icon [host] <project>     that project's app icon there, as a base64 PNG (for the app)
   fleet claude [--json] [--diff] [--kind <kind>[,<kind>...]] [host...]
                                   how the Claude Code setup (plugins, MCP servers, settings,
@@ -3348,6 +3435,7 @@ case "$cmd" in
   new|n)    cmd_new "$@" ;;
   projects|p) cmd_projects "$@" ;;
   models)   cmd_models "$@" ;;
+  history)  cmd_history "$@" ;;
   icon)     cmd_icon "$@" ;;
   claude)   cmd_claude "$@" ;;
   convert)  cmd_convert "$@" ;;

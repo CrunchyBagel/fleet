@@ -1113,5 +1113,74 @@ J=$(run status --json)
 assert_eq "a dead one whose worktree is gone is not listed" "$(printf '%s' "$J" | jq -r '[.[] | select(.session=="deltaL-gone")] | length')" "0"
 assert_false "  ...and is forgotten"                   test -e "$T/state/sessions/deltaL-gone"
 
+# ---------------------------------------------------------------- history
+
+section "history"
+# conv <dir> <id> <touch -t stamp> <title> <prompt>: a Claude Code transcript
+# for a conversation that ran in <dir>, as ~/.claude/projects keeps it. The
+# leafUuid-only last-prompt line after the real one is what Claude Code writes too.
+conv() {
+  local d; d="$T/home/.claude/projects/$(printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g')"
+  mkdir -p "$d"
+  { printf '{"type":"user","message":{"content":"hi"}}\n'
+    [ -z "$4" ] || jq -nc --arg t "$4" --arg id "$2" '{type: "custom-title", customTitle: $t, sessionId: $id}'
+    [ -z "$5" ] || jq -nc --arg p "$5" --arg id "$2" '{type: "last-prompt", lastPrompt: $p, sessionId: $id}'
+    printf '{"type":"last-prompt","leafUuid":"x","sessionId":"%s"}\n' "$2"
+  } > "$d/$2.jsonl"
+  touch -t "$3" "$d/$2.jsonl"
+}
+U1=11111111-1111-1111-1111-111111111111; U2=22222222-2222-2222-2222-222222222222
+U3=33333333-3333-3333-3333-333333333333; U4=44444444-4444-4444-4444-444444444444
+U5=55555555-5555-5555-5555-555555555555; U6=66666666-6666-6666-6666-666666666666
+U7=77777777-7777-7777-7777-777777777777; U8=88888888-8888-8888-8888-888888888888
+git clone -q "$T/origins/alpha.git" "$T/root/hist"
+conv "$T/root/hist" "$U1" 202609010900 "laptop-hist-main" "first thing"
+conv "$T/root/hist" "$U2" 202609030900 "laptop-hist-review" "review the PR"
+conv "$T/root/hist" "$U3" 202609020900 "Fix login" "$(printf 'x%.0s' $(seq 1 500))"
+conv "$T/root/hist" "$U4" 202609040900 "laptop-hist-stub" ""                       # nothing ever asked
+conv "$T/root/hist" "$U5" 202609050900 "laptop-hist-live" "still running"
+conv "$T/root/hist" "$U6" 202609060900 "laptop-hist-crashed" "was running at the power cut"
+HK="$T/home/.claude/projects/$(printf '%s' "$T/root/hist" | sed 's/[^A-Za-z0-9]/-/g')"
+printf 'not json\n' >> "$HK/$U2.jsonl"; touch -t 202609030900 "$HK/$U2.jsonl"   # a line that is not JSON
+mkdir -p "$T/home/.claude/sessions"
+printf '{"sessionId":"%s"}\n' "$U5" > "$T/home/.claude/sessions/$$.json"          # this shell: alive
+sh -c 'exit 0' & DEADPID=$!; wait "$DEADPID"
+printf '{"sessionId":"%s"}\n' "$U6" > "$T/home/.claude/sessions/$DEADPID.json"    # left behind
+H=$(run history --local hist)
+assert_eq "history: newest first, stub and running ones left out" \
+  "$(printf '%s' "$H" | jq -r 'map(.id[0:1]) | join(" ")')" "6 2 3 1"
+assert_eq "  ...a fleet title gives the name"      "$(printf '%s' "$H" | jq -r --arg u "$U2" '.[] | select(.id == $u) | "\(.name)|\(.title)|\(.prompt)"')" "review|laptop-hist-review|review the PR"
+assert_eq "  ...the bare one is main"              "$(printf '%s' "$H" | jq -r --arg u "$U1" '.[] | select(.id == $u) | .name')" "main"
+assert_eq "  ...another title gives no name"       "$(printf '%s' "$H" | jq -r --arg u "$U3" '.[] | select(.id == $u) | "\(.name)|\(.title)"')" "|Fix login"
+assert_eq "  ...prompt clipped to 400"             "$(printf '%s' "$H" | jq -r --arg u "$U3" '.[] | select(.id == $u) | .prompt | length')" "400"
+assert_eq "  ...dir and ts"                        "$(printf '%s' "$H" | jq -r --arg u "$U1" '.[] | select(.id == $u) | "\(.dir) \(.ts > 0)"')" "$T/root/hist true"
+assert_eq "history --local <id>: just that one"    "$(run history --local hist "$U1" | jq -r 'map(.id) | join(" ")')" "$U1"
+assert_eq "  ...[] for an unknown id"              "$(run history --local hist "$U7")" "[]"
+assert_contains "history of a project with no clone fails" "$(run history --local nosuch 2>&1)" "no clone for nosuch"
+assert_eq "  ...exit 1"                            "$(run history --local nosuch >/dev/null 2>&1; echo $?)" "1"
+assert_eq "history of a project with none is []"   "$(run history --local plainB)" "[]"
+# worktrees: a converted project, one live worktree and one removed
+git clone -q "$T/origins/alpha.git" "$T/root/histW"; run convert histW >/dev/null
+run new --local histW ui >/dev/null; run new --local histW old >/dev/null
+conv "$TR/root/histW/.claude/worktrees/ui"  "$U7" 202609070900 "laptop-histW-whatever" "worktree work"
+conv "$TR/root/histW/.claude/worktrees/old" "$U8" 202609080900 "laptop-histW-old" "gone soon"
+git -C "$T/root/histW" worktree remove "$T/root/histW/.claude/worktrees/old"
+HW=$(run history --local histW)
+assert_eq "history: a worktree's conversation is named after the worktree" \
+  "$(printf '%s' "$HW" | jq -r --arg u "$U7" '.[] | select(.id == $u) | "\(.name) \(.dir)"')" "ui $TR/root/histW/.claude/worktrees/ui"
+assert_eq "  ...a removed worktree's is not offered" "$(printf '%s' "$HW" | jq -r --arg u "$U8" '[.[] | select(.id == $u)] | length')" "0"
+# the cap
+git clone -q "$T/origins/alpha.git" "$T/root/histN"
+for i in $(seq 10 31); do conv "$T/root/histN" "aaaaaaaa-0000-0000-0000-0000000000$i" "2026090100$i" "laptop-histN-n$i" "p$i"; done
+assert_eq "history: at most 20, the newest"        "$(run history --local histN | jq -r 'length, .[0].name, .[19].name' | tr '\n' ' ')" "20 n31 n12 "
+# the command
+assert_contains "history table: name, when and id" "$(run history hist)" "review"
+assert_contains "  ...the id to resume with"       "$(run history hist)" "$U2"
+assert_contains "  ...a title when there is no name" "$(run history hist)" "Fix login"
+assert_eq "history --json is the array"            "$(run history hist --json | jq -r 'length')" "4"
+RK="$RH/.claude/projects/$(printf '%s' "$T/rootR/plainR" | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$RK"
+jq -nc '{type: "last-prompt", lastPrompt: "on studio"}' > "$RK/$U1.jsonl"
+assert_eq "history on another host"                "$(renv FLEET_HOSTS="laptop studio" -- history studio plainR --json | jq -r '.[0].prompt')" "on studio"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
