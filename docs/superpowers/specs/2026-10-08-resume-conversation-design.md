@@ -1,6 +1,6 @@
 # Resuming a conversation in a new session
 
-Date: 2026-10-08. Status: design approved, not implemented.
+Date: 2026-10-08. Status: implemented.
 
 ## Goal
 

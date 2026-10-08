@@ -180,6 +180,15 @@ struct HostsInfo: Codable { let hosts: [HostInfo]; let down: [HostDown] }
 struct ProjectEntry: Codable, Hashable { let project: String; let layout: String; let claude: Bool; let path: String; let remote: String }
 struct ProjectsList: Codable { let host: String; let projects: [ProjectEntry] }
 
+/// `fleet history <host> <project> --json`: a conversation Claude Code there
+/// can resume. `name` is its fleet session name ("" when it was not started
+/// by fleet; `title` is shown then), `ts` the transcript's mtime.
+struct HistoryEntry: Codable, Hashable, Identifiable {
+    let id: String, dir: String, name: String, title: String, prompt: String, ts: Int
+    var label: String { !name.isEmpty ? name : (!title.isEmpty ? title : "untitled") }
+    var date: Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
+}
+
 /// `fleet models <host> --json`: what Claude Code there can start with.
 /// `section` is "main" (its picker) or "overflow" (older versions);
 /// `defaultModel` is the id or alias its settings name, "" when Claude Code

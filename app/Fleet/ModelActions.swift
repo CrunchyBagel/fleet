@@ -61,11 +61,12 @@ extension FleetModel {
     }
     /// Start a session (`fleet new --no-attach`, then attach when asked),
     /// telling `status` what stage it is at; throws so the sheet can show why.
-    func newSession(host: String, project: String, name: String?, model: String? = nil, thenAttach: Bool,
+    func newSession(host: String, project: String, name: String?, model: String? = nil, resume: String? = nil, thenAttach: Bool,
                     status: @escaping (String) -> Void) async throws {
         let t = Terminal.preferred
-        status("Starting \(project) on \(host): creating the tmux session and launching Claude Code…")
-        let (h, sess, _) = try await FleetCLI.newSession(host: host, project: project, name: name, model: model)
+        status(resume == nil ? "Starting \(project) on \(host): creating the tmux session and launching Claude Code…"
+                             : "Resuming the conversation in \(project) on \(host)…")
+        let (h, sess, _) = try await FleetCLI.newSession(host: host, project: project, name: name, model: model, resume: resume)
         if thenAttach {
             status("Opening \(sess) in \(t.title)…")
             try await FleetCLI.attach(host: h, session: sess, terminal: t)

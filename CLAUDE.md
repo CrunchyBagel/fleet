@@ -560,7 +560,13 @@ whoever runs it.
   field over a list of the host's projects (Enter starts when one is
   chosen), and Start keeps the sheet up with a status line through `fleet
   new` and the attach, closing on success and showing the error otherwise
-  (`FleetModel.newSession` is async and reports stages). Settings (⌘,) is
+  (`FleetModel.newSession` is async and reports stages). Under the
+  project list a Conversation list (`fleet history <host> <project>
+  --json`, loaded per project for the sheet's life, `HistoryEntry`): New
+  conversation first and selected, then the project's earlier
+  conversations; picking one makes Start "Resume" (`fleet new …
+  --resume <id>`) and puts its name in the name field's placeholder (a
+  typed name wins). Settings (⌘,) is
   a two-tab window, keys in `Prefs`: General = terminal (`Terminal` enum,
   installed apps only, `terminal` default), refresh interval (`refreshInterval`,
   8s), show sessions fleet did not start (`showAllSessions` -> `ls --all`),

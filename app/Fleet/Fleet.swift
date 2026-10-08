@@ -184,6 +184,10 @@ struct FleetCLI {
     static func models(on host: String) async -> ModelsList {
         (try? await decode(ModelsList.self, from: run(["models", host, "--json"]))) ?? .unknown
     }
+    /// `fleet history <host> <project> --json`: earlier conversations to resume.
+    static func history(host: String, project: String) async throws -> [HistoryEntry] {
+        try await decode([HistoryEntry].self, from: run(["history", host, project, "--json"]))
+    }
     /// `fleet icon <host> <project>`: the project's app icon there, PNG data.
     /// nil when it has none, the host is down or runs a fleet without `icon`.
     static func icon(host: String, project: String) async -> Data? {
@@ -279,9 +283,10 @@ struct FleetCLI {
         try await run(["hosts", "rm", name], tolerate: true)
     }
     /// Create (or reuse) a session without attaching; returns (host, session, dir).
-    static func newSession(host: String, project: String, name: String?, model: String? = nil) async throws -> (String, String, String) {
+    static func newSession(host: String, project: String, name: String?, model: String? = nil, resume: String? = nil) async throws -> (String, String, String) {
         var args = ["new", host, project]; if let n = name, !n.isEmpty { args.append(n) }; args.append("--no-attach")
         if let m = model, !m.isEmpty { args += ["--model", m] }
+        if let r = resume, !r.isEmpty { args += ["--resume", r] }
         let parts = try await run(args).trimmingCharacters(in: .newlines).split(separator: "\t").map(String.init)
         guard parts.count == 3 else { throw FleetError.failed(command: "fleet new", status: 1, stderr: "unexpected output") }
         return (parts[0], parts[1], parts[2])

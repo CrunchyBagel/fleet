@@ -268,6 +268,11 @@ struct NewSessionSheet: View {
     @State private var status: String?       // while starting: what fleet is doing
     @State private var failure: String?
     @FocusState private var filterFocused: Bool
+    @State private var resume: String = ""                       // conversation id; "" = New conversation
+    @State private var history: [String: [HistoryEntry]] = [:]   // per project, for the sheet's life
+    @State private var historyError: [String: String] = [:]
+    private var picked: HistoryEntry? { chosen.flatMap { history[$0] }?.first { $0.id == resume } }
+    private static let ago: RelativeDateTimeFormatter = { let f = RelativeDateTimeFormatter(); f.unitsStyle = .short; return f }()
 
     /// Projects on the host narrowed by the filter (any part of the name, case-insensitive).
     private var shown: [ProjectEntry] {
@@ -296,7 +301,7 @@ struct NewSessionSheet: View {
                 }
                 .tag(p.project)
             }
-            .frame(height: 180)
+            .frame(height: 150)
             // A double-click starts the session, as Enter does. This is the
             // List's own double-click hook: a tap gesture on the rows would
             // take the click before the List selects, so a single click no
@@ -312,6 +317,32 @@ struct NewSessionSheet: View {
                         .multilineTextAlignment(.center).foregroundStyle(.secondary).padding()
                 } else if shown.isEmpty { Text("No project matches").foregroundStyle(.secondary) }
             }
+            // Earlier conversations in the chosen project (fleet history), to
+            // resume instead of starting fresh. Fixed height, like the list
+            // above, so the sheet does not change size as they load.
+            List(selection: Binding(get: { resume }, set: { resume = $0 ?? "" })) {
+                Text("New conversation").tag("")
+                ForEach(chosen.flatMap { history[$0] } ?? []) { c in
+                    HStack(spacing: 8) {
+                        Text(c.label).lineLimit(1)
+                        Text(Self.ago.localizedString(for: c.date, relativeTo: Date())).foregroundStyle(.secondary).font(.caption)
+                        Text(c.prompt).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    }
+                    .tag(c.id)
+                }
+            }
+            .frame(height: 120)
+            .contextMenu(forSelectionType: String.self) { _ in } primaryAction: { ids in
+                if let r = ids.first { resume = r; start() }
+            }
+            .overlay(alignment: .bottom) {
+                if let p = chosen {
+                    if let e = historyError[p] { Text(e).font(.caption).foregroundStyle(.secondary).lineLimit(2).padding(6) }
+                    else if history[p] == nil { ProgressView().controlSize(.small).padding(6) }
+                    else if history[p]?.isEmpty == true { Text("No earlier conversations").font(.caption).foregroundStyle(.secondary).padding(6) }
+                }
+            }
+            .task(id: chosen) { await loadHistory(chosen) }
             // Which model the session starts with: the host's Claude Code
             // catalog (fleet models), with its own default as the first row.
             // That row passes no --model at all, so what Claude Code would
@@ -328,7 +359,8 @@ struct NewSessionSheet: View {
                 }
             }
             .disabled(model.models[host] == nil)
-            TextField("Session name (empty = main)", text: $name).textFieldStyle(.roundedBorder)
+            TextField(picked.map { $0.name.isEmpty ? "Session name (empty = main)" : "Session name (empty = \($0.name))" } ?? "Session name (empty = main)", text: $name)
+                .textFieldStyle(.roundedBorder)
             Toggle("Open in \(Terminal.preferred.title) when ready", isOn: $attach)
             // Always laid out, two lines tall, so the sheet does not grow
             // when starting begins; only a long error makes it taller.
@@ -345,7 +377,7 @@ struct NewSessionSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(status != nil)
-                Button("Start") { start() }.keyboardShortcut(.defaultAction).disabled(chosen == nil || status != nil)
+                Button(picked == nil ? "Start" : "Resume") { start() }.keyboardShortcut(.defaultAction).disabled(chosen == nil || status != nil)
             }
         }
         .padding().frame(width: 480)
@@ -361,7 +393,9 @@ struct NewSessionSheet: View {
         Task {
             do {
                 try await model.newSession(host: host, project: p, name: name.isEmpty ? nil : name,
-                                           model: chosenModel.isEmpty ? nil : chosenModel, thenAttach: attach) { status = $0 }
+                                           model: chosenModel.isEmpty ? nil : chosenModel,
+                                           resume: p == chosen && !resume.isEmpty ? resume : nil,
+                                           thenAttach: attach) { status = $0 }
                 status = nil
                 dismiss()
             } catch {
@@ -369,5 +403,13 @@ struct NewSessionSheet: View {
                 failure = error.localizedDescription
             }
         }
+    }
+    /// The chosen project's conversations, once per project per sheet; the
+    /// choice goes back to New conversation whenever the project changes.
+    private func loadHistory(_ p: String?) async {
+        resume = ""
+        guard let p, history[p] == nil, historyError[p] == nil else { return }
+        do { history[p] = try await FleetCLI.history(host: host, project: p) }
+        catch { historyError[p] = "Could not list conversations: \(error.localizedDescription)" }
     }
 }
