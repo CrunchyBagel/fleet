@@ -212,6 +212,16 @@ struct ModelsList: Codable {
     }
 }
 
+extension ModelsList {
+    /// `models --local` (what the iOS app runs on each Mac) has no `host`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        host = try c.decodeIfPresent(String.self, forKey: .host) ?? ""
+        defaultModel = try c.decode(String.self, forKey: .defaultModel)
+        models = try c.decode([ModelEntry].self, forKey: .models)
+    }
+}
+
 /// The account's usage limits: one account across the fleet, so the freshest
 /// status line snapshot on any host is the answer.
 struct UsageLimits {
@@ -267,7 +277,8 @@ extension Session {
     /// The repo the project is a clone of as "owner/name", lowercased, the
     /// CLI's `repo_key`: the same on every Mac whatever the URL shape or the
     /// folder the clone sits in. nil without an origin.
-    var repoKey: String? {
+    var repoKey: String? { Self.repoKey(remote) }
+    static func repoKey(_ remote: String?) -> String? {
         guard var r = remote, !r.isEmpty else { return nil }
         while r.hasSuffix("/") { r.removeLast() }
         if r.hasSuffix(".git") { r.removeLast(4) }

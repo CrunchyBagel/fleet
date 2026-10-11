@@ -1,44 +1,60 @@
 import SwiftUI
 
-// MARK: - Overview: usage, what needs you, every machine with its sessions
+/// Where the overview's rows lead.
+enum Route: Hashable { case session(String), host(String) }
+
+// MARK: - Overview: usage, a count of what needs you, every machine with its sessions
 
 struct OverviewView: View {
     @EnvironmentObject var model: MobileModel
+    @Environment(\.openURL) private var openURL
     @State private var newOn: String?
+    @State private var ending: Session?
     @State private var showSettings = false
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
         List {
-            if let u = model.usage { Section("Claude usage") { UsageRows(usage: u) } }
+            if !model.sessions.isEmpty || model.usage != nil {
+                Section { SummaryCard() }
+            }
             ForEach(model.orderedHosts, id: \.self) { h in
                 Section {
-                    if model.loading(h) {
-                        HStack(spacing: 8) { ProgressView(); Text("Asking \(h)…").foregroundStyle(.secondary) }.font(.callout)
-                    } else if let d = model.down[h] {
-                        Label(d, systemImage: "bolt.slash").foregroundStyle(.secondary).font(.callout)
-                    } else if model.sessions(on: h).isEmpty {
-                        Text("No sessions").foregroundStyle(.secondary).font(.callout)
-                    } else {
-                        ForEach(model.sessions(on: h)) { s in NavigationLink(value: s.id) { SessionRowView(session: s) } }
-                    }
-                } header: {
-                    HStack {
-                        Image(systemName: model.infos[h]?.symbol ?? "desktopcomputer")
-                        Text(h)
-                        Spacer()
-                        if model.down[h] == nil {
-                            Button { newOn = h } label: { Image(systemName: "plus.circle") }.font(.body)
+                    NavigationLink(value: Route.host(h)) { HostRowView(host: h) }
+                    if let d = model.down[h] {
+                        Text(d).font(.caption).foregroundStyle(.secondary)
+                    } else if !model.loading(h) {
+                        ForEach(model.sessions(on: h)) { s in
+                            NavigationLink(value: Route.session(s.id)) { SessionRowView(session: s) }
+                                .swipeActions(edge: .trailing) {
+                                    Button { ending = s } label: { Label("End", systemImage: "xmark.octagon") }.tint(.red)
+                                }
+                                .swipeActions(edge: .leading) {
+                                    if let u = s.claudeURL {
+                                        Button { openURL(u) } label: { Label("Claude", systemImage: "bubble.left.and.text.bubble.right") }.tint(.claude)
+                                    }
+                                }
+                                .contextMenu { SessionMenu(session: s, ending: $ending) }
+                        }
+                        Button { newOn = h } label: {
+                            Label("New session", systemImage: "plus.circle.fill").font(.subheadline.weight(.medium))
                         }
                     }
                 }
             }
             if let t = model.lastRefresh {
-                Section { Text("Updated \(t.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
+                Section { } footer: {
+                    Text("Updated \(t.formatted(date: .omitted, time: .standard))").frame(maxWidth: .infinity)
+                }
             }
         }
         .navigationTitle("Fleet")
-        .navigationDestination(for: String.self) { id in SessionDetailView(id: id) }
+        .navigationDestination(for: Route.self) { r in
+            switch r {
+            case .session(let id): SessionDetailView(id: id)
+            case .host(let h): HostDetailView(host: h)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { Button { showSettings = true } label: { Image(systemName: "gearshape") } }
             ToolbarItem(placement: .topBarTrailing) {
@@ -52,6 +68,7 @@ struct OverviewView: View {
         .onChange(of: phase) { _, p in if p == .background { model.resetConnections() } }
         .sheet(item: $newOn) { h in NewSessionSheet(host: h) }
         .sheet(isPresented: $showSettings) { NavigationStack { SettingsView() } }
+        .endSessionDialog($ending)
         .overlay(alignment: .bottom) { Banner() }
     }
 
@@ -73,43 +90,197 @@ struct OverviewView: View {
 
 extension String: @retroactive Identifiable { public var id: String { self } }
 
-/// One line per session; a blocked one adds what it is waiting for. The
-/// prompt and the rest are on the detail screen, not in the list.
-struct SessionRowView: View {
-    let session: Session
+extension Color {
+    /// The Claude mark's colour, for its buttons.
+    static let claude = Color(red: 0.85, green: 0.47, blue: 0.34)
+}
+
+/// The top of the overview: the account's limits as two rings, and how
+/// many agents are working or waiting on you.
+struct SummaryCard: View {
+    @EnvironmentObject var model: MobileModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Circle().fill(session.dotColor).frame(width: 10, height: 10)
-                Text(session.title).fontWeight(.medium)
-                Spacer()
-                if let w = session.waiting { Text("needs you · \(w)").font(.caption).foregroundStyle(.orange) }
-                else { Text(session.badge).font(.caption).foregroundStyle(.secondary) }
+        let waiting = model.needsYou.count
+        let running = model.sessions.filter { $0.state == "running" }.count
+        HStack(spacing: 18) {
+            if let u = model.usage {
+                UsageRing(title: "5-hour", pct: u.fiveHour, resets: u.fiveHourResets)
+                UsageRing(title: "7-day", pct: u.sevenDay, resets: u.sevenDayResets)
+                Divider().frame(height: 56)
             }
-            if session.state == "blocked", let n = session.note, !n.isEmpty {
-                Text(n).font(.caption).lineLimit(1).foregroundStyle(.orange).padding(.leading, 18)
+            VStack(alignment: .leading, spacing: 8) {
+                if waiting > 0 {
+                    stat("\(waiting)", waiting == 1 ? "needs you" : "need you", .orange)
+                } else {
+                    Label("Nothing waiting", systemImage: "checkmark.circle.fill").font(.subheadline.weight(.medium)).foregroundStyle(.green)
+                }
+                stat("\(running)", "working", running > 0 ? .green : .secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+    }
+    private func stat(_ n: String, _ what: String, _ tint: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(n).font(.title3.weight(.bold)).monospacedDigit().foregroundStyle(tint)
+            Text(what).font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// One usage limit as a ring, with when it resets.
+struct UsageRing: View {
+    let title: String
+    let pct: Int?
+    let resets: Date?
+    var body: some View {
+        let p = pct ?? 0
+        VStack(spacing: 4) {
+            Gauge(value: Double(min(p, 100)), in: 0...100) { Text(title) } currentValueLabel: {
+                Text(pct.map { "\($0)%" } ?? "–").font(.system(.body, design: .rounded).weight(.semibold))
+            }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .tint(p >= 90 ? .red : p >= 70 ? .orange : .accentColor)
+            Text(title).font(.caption.weight(.medium))
+            if let r = resets {
+                Text(r, format: .relative(presentation: .numeric, unitsStyle: .abbreviated)).font(.caption2).foregroundStyle(.secondary)
             }
         }
     }
 }
 
-struct UsageRows: View {
-    let usage: UsageLimits
+/// A machine's row: what kind of Mac, its chip, and whether it answers.
+struct HostRowView: View {
+    @EnvironmentObject var model: MobileModel
+    let host: String
     var body: some View {
-        meter("5-hour limit", usage.fiveHour, usage.fiveHourResets)
-        meter("7-day limit", usage.sevenDay, usage.sevenDayResets)
-    }
-    @ViewBuilder private func meter(_ title: String, _ pct: Int?, _ resets: Date?) -> some View {
-        if let p = pct {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(title)
-                    Spacer()
-                    Text("\(p)%").fontWeight(.semibold).foregroundStyle(p >= 90 ? Color.red : p >= 70 ? Color.orange : Color.primary)
+        let info = model.infos[host], down = model.down[host] != nil
+        let waiting = model.sessions(on: host).filter { $0.state == "blocked" }.count
+        HStack(spacing: 12) {
+            Image(systemName: info?.symbol ?? "desktopcomputer")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(down ? Color.secondary : Color.accentColor)
+                .frame(width: 38, height: 38)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill((down ? Color.secondary : Color.accentColor).opacity(0.14)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host).font(.headline)
+                Group {
+                    if down { Text("Offline") }
+                    else if model.loading(host) { Text("Connecting…") }
+                    else if let i = info { Text([i.modelTitle, i.chip].filter { !$0.isEmpty }.joined(separator: " · ")) }
+                    else { Text(" ") }
                 }
-                ProgressView(value: Double(min(p, 100)), total: 100).tint(p >= 90 ? .red : p >= 70 ? .orange : .accentColor)
-                if let r = resets { Text("resets \(r.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary) }
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            Spacer()
+            if model.loading(host) { ProgressView() }
+            else if waiting > 0 {
+                Text("\(waiting)").font(.caption.weight(.bold)).foregroundStyle(.white)
+                    .padding(.horizontal, 7).padding(.vertical, 2).background(Capsule().fill(.orange))
+            }
+        }
+    }
+}
+
+/// One session: its project's icon with the state dot, the name, and a
+/// second line with what it is doing (the question, orange, while blocked).
+struct SessionRowView: View {
+    let session: Session
+    var body: some View {
+        let blocked = session.state == "blocked"
+        HStack(spacing: 12) {
+            ProjectIcon(session: session, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(session.name == "main" ? session.project : session.name).font(.body.weight(.semibold)).lineLimit(1)
+                    if session.name != "main" { Text(session.project).foregroundStyle(.secondary).lineLimit(1) }
+                    Spacer(minLength: 4)
+                    trailing.font(.caption).monospacedDigit()
+                }
+                HStack(spacing: 6) {
+                    ModelTag(session: session)
+                    Text(session.doing ?? session.branch)
+                        .font(.subheadline)
+                        .foregroundStyle(blocked && session.note?.isEmpty == false ? Color.orange : Color.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+    @ViewBuilder private var trailing: some View {
+        switch session.state {
+        case "blocked": Text(session.waiting ?? "needs you").foregroundStyle(.orange)
+        case "running": Text("working").foregroundStyle(.green)
+        default:
+            if let t = session.shownTime { Text(t, format: .relative(presentation: .numeric, unitsStyle: .abbreviated)).foregroundStyle(.secondary) }
+        }
+    }
+}
+
+/// The project's app icon (`fleet icon`), else its initials on its own
+/// colour, rounded like an app icon, with the state dot on its corner.
+struct ProjectIcon: View {
+    @EnvironmentObject var model: MobileModel
+    let session: Session
+    var size: CGFloat = 40
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
+        Group {
+            if let image = model.icons[session.projectKey] {
+                Image(uiImage: image).resizable().interpolation(.high)
+            } else {
+                shape.fill(session.projectColor.gradient)
+                    .overlay(Text(session.projectInitials)
+                        .font(.system(size: size * (session.projectInitials.count > 1 ? 0.4 : 0.5), weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(.black.opacity(0.08), lineWidth: 0.5))
+        .overlay(alignment: .bottomTrailing) {
+            Circle().fill(session.dotColor)
+                .frame(width: max(10, size * 0.26), height: max(10, size * 0.26))
+                .overlay(Circle().strokeBorder(Color(uiColor: .secondarySystemGroupedBackground), lineWidth: 2.5))
+                .offset(x: 4, y: 4)
+        }
+        .task(id: session.projectKey) { model.loadIcon(for: session) }
+    }
+}
+
+/// Long-press menu on a session row.
+struct SessionMenu: View {
+    @Environment(\.openURL) private var openURL
+    let session: Session
+    @Binding var ending: Session?
+    var body: some View {
+        if let u = session.claudeURL { Button { openURL(u) } label: { Label("Open in Claude", systemImage: "bubble.left.and.text.bubble.right") } }
+        if let gh = session.githubURL { Button { openURL(gh) } label: { Label("Open on GitHub", systemImage: "link") } }
+        Divider()
+        Button(role: .destructive) { ending = session } label: { Label("End Session…", systemImage: "xmark.octagon") }
+    }
+}
+
+extension View {
+    /// The End confirmation, shared by the overview's swipe and the session screen.
+    func endSessionDialog(_ ending: Binding<Session?>, then: @escaping () -> Void = {}) -> some View {
+        modifier(EndSessionDialog(ending: ending, then: then))
+    }
+}
+
+private struct EndSessionDialog: ViewModifier {
+    @EnvironmentObject var model: MobileModel
+    @Binding var ending: Session?
+    let then: () -> Void
+    func body(content: Content) -> some View {
+        content.confirmationDialog("End \(ending?.title ?? "") on \(ending?.host ?? "")?",
+                                   isPresented: Binding(get: { ending != nil }, set: { if !$0 { ending = nil } }),
+                                   titleVisibility: .visible, presenting: ending) { s in
+            Button("End Session", role: .destructive) { Task { await model.endSession(s); then() } }
+        } message: { s in
+            Text(s.worktree ? "The agent is asked to exit, then the tmux session is closed. The worktree and its branch stay."
+                            : "The agent is asked to exit, then the tmux session is closed. Uncommitted work is untouched.")
         }
     }
 }
@@ -118,263 +289,25 @@ struct UsageRows: View {
 struct Banner: View {
     @EnvironmentObject var model: MobileModel
     var body: some View {
-        if let b = model.busy {
-            HStack { ProgressView(); Text(b) }.font(.callout).padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)).padding()
-        } else if let e = model.error {
-            HStack(alignment: .top) {
-                Text(e).font(.callout).foregroundStyle(.red)
-                Spacer()
-                Button { model.error = nil } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(.secondary)
-            }
-            .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)).padding()
-        }
-    }
-}
-
-// MARK: - One session
-
-struct SessionDetailView: View {
-    @EnvironmentObject var model: MobileModel
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
-    let id: String
-    @State private var confirmEnd = false
-    @State private var renaming = false
-    @State private var newName = ""
-
-    var body: some View {
-        if let s = model.session(id: id) {
-            List {
-                Section {
-                    HStack(spacing: 8) {
-                        Circle().fill(s.dotColor).frame(width: 12, height: 12)
-                        Text(s.badgeWithWait).foregroundStyle(s.dotColor).fontWeight(.semibold)
-                        Spacer()
-                        Text("on \(s.host)").foregroundStyle(.secondary)
-                    }
+        Group {
+            if let b = model.busy {
+                HStack(spacing: 10) { ProgressView(); Text(b) }.font(.callout)
+            } else if let e = model.error {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(e).font(.callout)
+                    Spacer(minLength: 0)
+                    Button { model.error = nil } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(.secondary)
                 }
-                let reply = s.said?.isEmpty == false ? s.said : nil
-                let ask = s.state == "blocked" && s.note?.isEmpty == false ? s.note : nil
-                let askIsReply = ask != nil && reply != nil && (ask == reply || reply!.hasPrefix(ask!.replacingOccurrences(of: "…", with: "")))
-                if s.prompt?.isEmpty == false || ask != nil || reply != nil {
-                    Section {
-                        if let p = s.prompt, !p.isEmpty { row("You asked", p) }
-                        if let a = ask, !askIsReply { row("Needs", a, .orange) }
-                        if let r = reply { row(askIsReply ? "Waiting on you" : s.state == "done" ? "Replied" : "Last reply", r, askIsReply ? .orange : .primary) }
-                    }
-                }
-                Section {
-                    if let cu = s.claudeURL {
-                        Button { openURL(cu) } label: { Label("Open in Claude", systemImage: "bubble.left.and.text.bubble.right") }
-                    }
-                    if let gh = s.githubURL { Link(destination: gh) { Label("GitHub", systemImage: "link") } }
-                    if !s.worktree {   // a worktree session's name is its worktree's
-                        Button { newName = s.name == "main" ? "" : s.name; renaming = true } label: { Label("Rename", systemImage: "pencil") }
-                    }
-                    Button(role: .destructive) { confirmEnd = true } label: { Label("End session", systemImage: "xmark.octagon") }
-                }
-                Section {
-                    if s.hasStats {
-                        if let m = s.model, !m.isEmpty { row("Model", m) }
-                        if let c = s.contextPercent {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack { Text("Context window").foregroundStyle(.secondary); Spacer(); Text("\(c)% full") }
-                                ProgressView(value: Double(min(c, 100)), total: 100).tint(c >= 90 ? .red : c >= 75 ? .orange : .accentColor)
-                            }
-                        }
-                    }
-                    row("Last activity", s.shownTime.map { $0.formatted(.relative(presentation: .named)) } ?? "—")
-                    row("Branch", s.branch + (s.dirty ? "  *" : "") + (s.ahead > 0 ? "  ↑\(s.ahead)" : "") + (s.behind > 0 ? "  ↓\(s.behind)" : ""))
-                    row("Upstream", s.upstream.isEmpty ? "none (not pushed yet)" : s.upstream)
-                    row("Last commit", s.subject.isEmpty ? "—" : s.subject)
-                    row("Path", s.path)
-                    row("tmux session", s.session)
-                    if !s.attachedFrom.isEmpty { row("Attached from", s.attachedFrom.joined(separator: ", ")) }
-                }
-            }
-            .navigationTitle(s.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .alert("Rename \(s.title)", isPresented: $renaming) {
-                TextField("Name", text: $newName)
-                Button("Rename") {
-                    let n = newName.trimmingCharacters(in: .whitespaces)
-                    // Its id changes with the name, so this screen would show it as ended.
-                    if !n.isEmpty && n != s.name { Task { await model.renameSession(s, to: n); dismiss() } }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("It becomes \(s.project)-<name> on \(s.host), and \(s.host)-\(s.project)-<name> in the Claude apps.")
-            }
-            .confirmationDialog("End \(s.title) on \(s.host)?", isPresented: $confirmEnd, titleVisibility: .visible) {
-                Button("End Session", role: .destructive) { Task { await model.endSession(s); dismiss() } }
-            } message: {
-                Text(s.worktree ? "The agent is asked to exit, then the tmux session is closed. The worktree and its branch stay."
-                                : "The agent is asked to exit, then the tmux session is closed. Uncommitted work is untouched.")
-            }
-            .overlay(alignment: .bottom) { Banner() }
-        } else {
-            ContentUnavailableView("Session ended", systemImage: "moon.zzz", description: Text("It is no longer in Fleet's list."))
-        }
-    }
-    private func row(_ label: String, _ value: String, _ color: Color = .primary) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(value).foregroundStyle(color).textSelection(.enabled)
-        }
-    }
-}
-
-// MARK: - New session
-
-struct NewSessionSheet: View {
-    @EnvironmentObject var model: MobileModel
-    @Environment(\.dismiss) private var dismiss
-    let host: String
-    @State private var project = ""
-    @State private var name = ""
-    @State private var starting = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                let projects = model.projects[host] ?? []
-                Section("Project on \(host)") {
-                    if projects.isEmpty {
-                        HStack { ProgressView(); Text("Listing projects…").foregroundStyle(.secondary) }
-                    } else {
-                        Picker("Project", selection: $project) {
-                            ForEach(projects, id: \.project) { p in Text(p.claude ? "\(p.project)  ·  claude" : p.project).tag(p.project) }
-                        }
-                        .pickerStyle(.inline).labelsHidden()
-                    }
-                }
-                Section {
-                    TextField("Session name (empty = main)", text: $name).textInputAutocapitalization(.never).autocorrectionDisabled()
-                } footer: {
-                    Text("A name adds a second session in the same repo, or a worktree once the project is converted. The session starts Claude Code with Remote Control, so it appears in the Claude app.")
-                }
-            }
-            .navigationTitle("New session")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    if starting { ProgressView() } else {
-                        Button("Start") {
-                            starting = true
-                            Task { _ = await model.newSession(on: host, project: project, name: name); starting = false; dismiss() }
-                        }.disabled(project.isEmpty)
-                    }
-                }
-            }
-            .task {
-                await model.loadProjects(on: host)
-                if project.isEmpty, let f = model.projects[host]?.first { project = f.project }
             }
         }
-    }
-}
-
-// MARK: - Settings and onboarding
-
-struct SettingsView: View {
-    @EnvironmentObject var model: MobileModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var entry = ""
-    @State private var discovering = false
-    @State private var message: String?
-
-    var body: some View {
-        Form {
-            Section("ssh") {
-                TextField("Username on your Macs", text: $model.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                KeyRow()
-            }
-            Section {
-                ForEach(model.hosts, id: \.self) { h in
-                    HStack { Text(h); Spacer(); if model.down[h] != nil { Image(systemName: "bolt.slash").foregroundStyle(.secondary) } }
-                }
-                .onDelete { idx in var h = model.hosts; h.remove(atOffsets: idx); model.hosts = h }
-                HStack {
-                    TextField("Add a Mac by tailnet name", text: $entry).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Add") { model.hosts = model.hosts + [entry.trimmingCharacters(in: .whitespaces)]; entry = "" }
-                        .disabled(entry.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                if discovering { HStack { ProgressView(); Text("Asking your Macs…") } }
-                else { Button("Refresh host list from a Mac") { discover() }.disabled(model.hosts.isEmpty) }
-                if let m = message { Text(m).font(.caption).foregroundStyle(.secondary) }
-            } header: { Text("Hosts") } footer: {
-                Text("Refresh asks the first Mac that answers for ~/.config/fleet/hosts, the list every Mac shares. The phone must be on the tailnet (Tailscale app).")
-            }
-            Section {
-                Button("Forget pinned host keys") { HostKeys.forgetAll(); model.resetConnections(); message = "Host keys forgotten; the next connection to each Mac pins its key again." }
-            } footer: {
-                Text("Each Mac's ssh host key is pinned on first connection. Forget them only after reinstalling macOS on a Mac.")
-            }
-        }
-        .navigationTitle("Settings")
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-    }
-    private func discover() {
-        discovering = true; message = nil
-        Task {
-            do { let (h, from) = try await model.refreshHosts(); model.hosts = h; message = "From \(from): \(h.joined(separator: ", "))" }
-            catch { message = error.localizedDescription }
-            discovering = false
-        }
-    }
-}
-
-/// The phone's public key, with the one command that authorizes it everywhere.
-struct KeyRow: View {
-    @State private var line = (try? KeyStore.publicKeyLine()) ?? ""
-    @State private var copied = false
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("This phone's key").font(.caption).foregroundStyle(.secondary)
-            Text(line).font(.caption2.monospaced()).lineLimit(3).truncationMode(.middle)
-            HStack {
-                Button(copied ? "Copied" : "Copy `fleet keys add` command") {
-                    UIPasteboard.general.string = "fleet keys add \"\(line)\""; copied = true
-                }
-                .font(.callout)
-            }
-            Text("Run that on any Mac with Fleet installed: it authorizes the key on every Mac in the fleet. Revoke with fleet keys rm \(KeyStore.comment).")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
-}
-
-struct OnboardingView: View {
-    @EnvironmentObject var model: MobileModel
-    @State private var entry = ""
-    @State private var working = false
-    @State private var message: String?
-    var body: some View {
-        Form {
-            Section {
-                Text("Fleet runs the fleet command on your Macs over ssh, through Tailscale. Three things to set up: your username there, this phone's key on the Macs, and one Mac to ask for the host list.")
-                    .font(.callout)
-            }
-            Section("1. Username on your Macs") {
-                TextField("username", text: $model.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-            }
-            Section("2. Authorize this phone") { KeyRow() }
-            Section("3. One Mac's tailnet name") {
-                TextField("e.g. mini", text: $entry).textInputAutocapitalization(.never).autocorrectionDisabled()
-                if working { HStack { ProgressView(); Text("Connecting…") } }
-                else { Button("Connect and fetch the host list") { connect() }.disabled(entry.isEmpty || model.username.isEmpty) }
-                if let m = message { Text(m).font(.callout).foregroundStyle(.red) }
-            }
-        }
-        .navigationTitle("Set up Fleet")
-    }
-    private func connect() {
-        working = true; message = nil
-        Task {
-            do { model.hosts = try await model.discoverHosts(from: entry) }
-            catch { message = error.localizedDescription }
-            working = false
-        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .padding()
+        .opacity(model.busy == nil && model.error == nil ? 0 : 1)
+        .allowsHitTesting(model.busy != nil || model.error != nil)
+        .animation(.easeInOut(duration: 0.2), value: model.busy == nil && model.error == nil)
     }
 }

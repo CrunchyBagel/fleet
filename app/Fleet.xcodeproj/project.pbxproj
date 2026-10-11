@@ -3,16 +3,19 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		083027A1394959B4F6AA81BE /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 8B53524E43B6752C3CB29043 /* AppIcon.icon */; };
+		0A3B29D4BB62F52B5EAB1ED3 /* Marks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CA47806D563D09D2066CE64 /* Marks.swift */; };
+		156A6789123D4764DB768AAF /* NewSessionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AAEB3125A84473D354EBEC /* NewSessionSheet.swift */; };
 		2364C83C3A3702025E147576 /* Fleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11577105A672148D036E55F3 /* Fleet.swift */; };
 		24A078877D76CE9EFBF22844 /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4037D28DBBC954D604FA1685 /* SessionView.swift */; };
 		2550A65E25CC4FF39C7B4EEA /* FleetMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */; };
 		3F970686C0779DD27C3834C1 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09A0690E82130C7764087497 /* Views.swift */; };
 		41E3992484038DE6A874A69C /* MobileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */; };
+		43EC823777C782A50A05F56D /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E44D0367CA6C083E9E5EA87 /* SessionDetailView.swift */; };
 		4B3BAA071F1B50A35D4BAB96 /* ModelActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB28D64E206265D44338F61 /* ModelActions.swift */; };
 		4BA18406B33414ACA892B72F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1FBC533AD3B17229A6BB166 /* ContentView.swift */; };
 		5137AA2672DBAEE5F5ED8BAB /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 5264CE5893240A31FCCAD7BC /* Citadel */; };
@@ -22,12 +25,15 @@
 		7AF41430EE88A4658876AB8B /* SSH.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF449911F45F0E24FAB0D2E1 /* SSH.swift */; };
 		7CDC9F5ADBAB7DF1BCD526E8 /* ClaudeSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34F1F93E921F6FB71A9AB4B /* ClaudeSetupView.swift */; };
 		82E09FD38FCCC0D22B04ECBE /* HostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B305171705245CC710FE3FD /* HostView.swift */; };
+		9A2D2A79F2C7E6D798E89E18 /* HostDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27C113C78BF0F33C45D7D942 /* HostDetailView.swift */; };
 		A61CBE0EF3FCF9520D086E85 /* OverviewViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2224834AC6B6FAE3B0AB1E9 /* OverviewViews.swift */; };
 		A6DD10F26F51E83C54FD5D4F /* Model.swift in Sources */ = {isa = PBXBuildFile; fileRef = A781C5978BD166C8C9F0E32F /* Model.swift */; };
 		AF120FD009AE3FF48512C498 /* Controls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E201DF9826FBF58F0A0C108 /* Controls.swift */; };
 		B411C2B751A10284D038B55D /* Keys.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE6E69435A9132E8E6545002 /* Keys.swift */; };
 		B47C4046BE8F2DECFFEB3B55 /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FFAECEACC689765C45EEC2 /* SettingsViews.swift */; };
+		D7B02C04E7E522A03E12C67C /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A89F6D7697C7ACF60823C682 /* SettingsViews.swift */; };
 		DA2EC03227A431E614BE9CFF /* ScreenSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491FA8F543B21A286BB40061 /* ScreenSharing.swift */; };
+		E278EAB1FE8444CFE1AAF9C0 /* Marks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CA47806D563D09D2066CE64 /* Marks.swift */; };
 		EB6E26BDFCC3E5DD599797EF /* FleetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C329FAEED4F1EDF600180595 /* FleetApp.swift */; };
 /* End PBXBuildFile section */
 
@@ -36,16 +42,21 @@
 		11577105A672148D036E55F3 /* Fleet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fleet.swift; sourceTree = "<group>"; };
 		1B305171705245CC710FE3FD /* HostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostView.swift; sourceTree = "<group>"; };
 		1E201DF9826FBF58F0A0C108 /* Controls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controls.swift; sourceTree = "<group>"; };
+		27C113C78BF0F33C45D7D942 /* HostDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostDetailView.swift; sourceTree = "<group>"; };
 		28AA695414672DE697BA6F49 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		3BB28D64E206265D44338F61 /* ModelActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelActions.swift; sourceTree = "<group>"; };
+		3CA47806D563D09D2066CE64 /* Marks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Marks.swift; sourceTree = "<group>"; };
 		4037D28DBBC954D604FA1685 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
 		491FA8F543B21A286BB40061 /* ScreenSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenSharing.swift; sourceTree = "<group>"; };
+		59AAEB3125A84473D354EBEC /* NewSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionSheet.swift; sourceTree = "<group>"; };
 		5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileModel.swift; sourceTree = "<group>"; };
 		5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetMobileApp.swift; sourceTree = "<group>"; };
-		8B53524E43B6752C3CB29043 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		8B53524E43B6752C3CB29043 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		9E44D0367CA6C083E9E5EA87 /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
 		A1FBC533AD3B17229A6BB166 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A5876EFC52B99BEE94B76837 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A781C5978BD166C8C9F0E32F /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
+		A89F6D7697C7ACF60823C682 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		BB851BD8F45E2DDBD2D07009 /* Fleet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fleet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BE6E69435A9132E8E6545002 /* Keys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keys.swift; sourceTree = "<group>"; };
 		C329FAEED4F1EDF600180595 /* FleetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetApp.swift; sourceTree = "<group>"; };
@@ -83,6 +94,7 @@
 		5AE67C17A6351DD70FF940CC /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				3CA47806D563D09D2066CE64 /* Marks.swift */,
 				28AA695414672DE697BA6F49 /* Models.swift */,
 			);
 			path = Shared;
@@ -101,9 +113,13 @@
 			isa = PBXGroup;
 			children = (
 				5C3AD6703146AC29A67B2DAD /* FleetMobileApp.swift */,
+				27C113C78BF0F33C45D7D942 /* HostDetailView.swift */,
 				A5876EFC52B99BEE94B76837 /* Info.plist */,
 				BE6E69435A9132E8E6545002 /* Keys.swift */,
 				5ADE2AF5FAA3B6889CDC9970 /* MobileModel.swift */,
+				59AAEB3125A84473D354EBEC /* NewSessionSheet.swift */,
+				9E44D0367CA6C083E9E5EA87 /* SessionDetailView.swift */,
+				A89F6D7697C7ACF60823C682 /* SettingsViews.swift */,
 				CF449911F45F0E24FAB0D2E1 /* SSH.swift */,
 				09A0690E82130C7764087497 /* Views.swift */,
 			);
@@ -191,7 +207,6 @@
 				};
 			};
 			buildConfigurationList = 7FFF43D6FAA7D1590A801039 /* Build configuration list for PBXProject "Fleet" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -203,6 +218,8 @@
 			packageReferences = (
 				74C850D78F93023A193346F8 /* XCRemoteSwiftPackageReference "Citadel" */,
 			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 8044FD8A076FDFA8E073FDF1 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -242,6 +259,7 @@
 				2364C83C3A3702025E147576 /* Fleet.swift in Sources */,
 				EB6E26BDFCC3E5DD599797EF /* FleetApp.swift in Sources */,
 				82E09FD38FCCC0D22B04ECBE /* HostView.swift in Sources */,
+				E278EAB1FE8444CFE1AAF9C0 /* Marks.swift in Sources */,
 				A6DD10F26F51E83C54FD5D4F /* Model.swift in Sources */,
 				4B3BAA071F1B50A35D4BAB96 /* ModelActions.swift in Sources */,
 				58BC2F39725CD537B361D97F /* Models.swift in Sources */,
@@ -257,10 +275,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				2550A65E25CC4FF39C7B4EEA /* FleetMobileApp.swift in Sources */,
+				9A2D2A79F2C7E6D798E89E18 /* HostDetailView.swift in Sources */,
 				B411C2B751A10284D038B55D /* Keys.swift in Sources */,
+				0A3B29D4BB62F52B5EAB1ED3 /* Marks.swift in Sources */,
 				41E3992484038DE6A874A69C /* MobileModel.swift in Sources */,
 				77685373CB72A52A2D532901 /* Models.swift in Sources */,
+				156A6789123D4764DB768AAF /* NewSessionSheet.swift in Sources */,
 				7AF41430EE88A4658876AB8B /* SSH.swift in Sources */,
+				43EC823777C782A50A05F56D /* SessionDetailView.swift in Sources */,
+				D7B02C04E7E522A03E12C67C /* SettingsViews.swift in Sources */,
 				3F970686C0779DD27C3834C1 /* Views.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -435,7 +458,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Fleet/Fleet.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = 66BCGJJXLX;
+				DEVELOPMENT_TEAM = CHZS3BHM57;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Fleet/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -454,7 +477,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Fleet/Fleet.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = 66BCGJJXLX;
+				DEVELOPMENT_TEAM = CHZS3BHM57;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Fleet/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

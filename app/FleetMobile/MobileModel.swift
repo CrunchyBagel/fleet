@@ -16,6 +16,12 @@ final class MobileModel: ObservableObject {
     @Published var lastRefresh: Date?
     @Published var error: String?
     @Published var busy: String?
+    @Published var icons: [String: UIImage] = [:]          // Session.projectKey -> its app icon, kept while the app runs
+    private var iconAsked: Set<String> = []                // "projectKey host": each host is asked once per project
+    @Published var models: [String: ModelsList] = [:]
+    @Published var doctor: [String: [DoctorLine]] = [:]
+    @Published var doctorText: [String: String] = [:]
+    @Published var doctorRunning: Set<String> = []
 
     private var runner: SSHRunner?
     private var runnerUser = ""
@@ -49,6 +55,7 @@ final class MobileModel: ObservableObject {
     func sessions(on host: String) -> [Session] { sessions.filter { $0.host == host }.sorted { ($0.project, $0.name) < ($1.project, $1.name) } }
     func session(id: String) -> Session? { sessions.first { $0.id == id } }
     var usage: UsageLimits? { UsageLimits.freshest(in: sessions) }
+    var needsYou: [Session] { sessions.filter { $0.state == "blocked" }.sorted { ($0.shownTime ?? .distantPast) < ($1.shownTime ?? .distantPast) } }
 
     /// Hosts with a request in flight. Each host is asked on its own and its
     /// section updates as soon as it answers, so one slow or unreachable Mac
@@ -105,15 +112,52 @@ final class MobileModel: ObservableObject {
         } catch { self.error = "projects on \(host): \(error.localizedDescription)" }
     }
 
-    /// `fleet new --local` there; the session name follows the CLI's rule.
-    func newSession(on host: String, project: String, name: String?) async -> String? {
-        busy = "Starting \(project) on \(host)…"; defer { busy = nil }
+    /// The project's app icon (`fleet icon --local` on the host), as the Mac
+    /// app does: one answer serves every Mac with that repo, and a host
+    /// without one is not asked again.
+    func loadIcon(key: String, host: String, project: String) {
+        guard icons[key] == nil, iconAsked.insert(key + " " + host).inserted else { return }
+        Task {
+            guard let out = try? await ssh().fleet(on: host, ["icon", "--local", project], timeout: .seconds(20)),
+                  let data = Data(base64Encoded: out.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let image = UIImage(data: data) else { return }
+            icons[key] = image
+        }
+    }
+    func loadIcon(for s: Session) { loadIcon(key: s.projectKey, host: s.host, project: s.project) }
+
+    /// What Claude Code on the host can start with. Never an error: unknown means Automatic only.
+    func loadModels(on host: String) async {
+        guard models[host] == nil else { return }
+        let out = try? await ssh().fleet(on: host, ["models", "--local"])
+        models[host] = out.flatMap { try? JSONDecoder().decode(ModelsList.self, from: Data($0.utf8)) } ?? .unknown
+    }
+
+    /// Earlier conversations in the project there, for New session's Resume.
+    func history(on host: String, project: String) async throws -> [HistoryEntry] {
+        let out = try await ssh().fleet(on: host, ["history", "--local", project], timeout: .seconds(30))
+        return try JSONDecoder().decode([HistoryEntry].self, from: Data(out.utf8))
+    }
+
+    /// `fleet doctor --local` there: read-only, exit 1 meaning "has FAILs".
+    func runDoctor(on host: String) async {
+        guard doctorRunning.insert(host).inserted else { return }
+        defer { doctorRunning.remove(host) }
         do {
-            var args = ["new", "--local", project]; if let n = name, !n.isEmpty { args.append(n) }
-            _ = try await ssh().fleet(on: host, args, timeout: .seconds(40))
-            await refresh(host: host)
-            return Session.sessionName(project: project, task: name?.isEmpty == false ? name! : "main")
-        } catch { self.error = "new: \(error.localizedDescription)"; return nil }
+            let out = try await ssh().fleet(on: host, ["doctor", "--local"], tolerate: true, timeout: .seconds(60))
+            doctorText[host] = out; doctor[host] = DoctorLine.parse(out)
+        } catch { self.error = "doctor: \(error.localizedDescription)" }
+    }
+
+    /// `fleet new --local` there, with `--model` and `--resume` as the Mac
+    /// app passes them; throws so the sheet can stay up and say why.
+    func newSession(on host: String, project: String, name: String?, model: String? = nil, resume: String? = nil) async throws {
+        var args = ["new", "--local", project]
+        if let n = name, !n.isEmpty { args.append(n) }
+        if let m = model, !m.isEmpty { args += ["--model", m] }
+        if let r = resume, !r.isEmpty { args += ["--resume", r] }
+        _ = try await ssh().fleet(on: host, args, timeout: .seconds(40))
+        await refresh(host: host)
     }
 
     /// `fleet rename --local` on the session's host: it becomes

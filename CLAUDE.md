@@ -394,8 +394,9 @@ whoever runs it.
   `FleetMobile` (iOS 17+, sources `app/FleetMobile/`). `app/Shared/Models.swift`
   is compiled into both: the records mirroring the CLI's JSON (`Session`,
   `HostInfo` with `score` optional because `hosts --info-local` has none,
-  `DoctorLine`, `UsageLimits`, the `Session` badge/dot/title helpers).
-  Nothing platform-specific goes in Shared.
+  `DoctorLine`, `UsageLimits`, the `Session` badge/dot/title helpers);
+  `app/Shared/Marks.swift` holds the SwiftUI both draw alike (`ModelTag`,
+  the `Brand` marks and `SVGShape`). Nothing platform-specific goes in Shared.
 - Mac app: not sandboxed (spawns fleet); hardened runtime on;
   automatic signing. Build from the shell:
   `xcodebuild -project app/Fleet.xcodeproj -scheme Fleet -derivedDataPath app/.build build`. Single window,
@@ -607,14 +608,20 @@ whoever runs it.
   and connections close when the app goes to the background). One failure
   keeps the host's last sessions; the second in a row marks it down. Hosts
   show in the Mac app's order (`orderedHosts`: the `hosts info` sort, then
-  down, then not heard from yet); `projects --json`, `new --local <project> [name]` (session name by
-  `Session.sessionName`, the CLI's rule) and `kill --local <session>` are
-  run on the session's host. No attach, editor or screen sharing; "Open in
+  down, then not heard from yet); `projects --json`, `new --local <project> [name]
+  [--model m] [--resume id]`, `models --local`, `history --local <project>`,
+  `icon --local <project>` (cached per `projectKey` like the Mac app's),
+  `doctor --local` and `kill --local <session>` are run on the session's host. No attach, editor or screen sharing; "Open in
   Claude" is the `claude://` link. Polls only while the overview is up; new
   and end refresh just that host.
-  The overview is one line per session under its host (a blocked one adds
-  its question); there is no "needs you" section, the prompt and reply live
-  on the session screen. Settings > Hosts refreshes the list by asking the
+  The overview opens with a summary card (usage rings, how many need you
+  and are working), then per host a row leading to the machine screen
+  (info, its sessions, Doctor), its sessions (project icon with the state
+  dot, model tag, the note or prompt; swipe to end or open in Claude) and
+  a New session row; there is no "needs you" list, the prompt and reply
+  live on the session screen (action tiles, conversation, the git state
+  only that Mac has, details). New session is two steps: a searchable
+  project list, then conversation (new or one to resume), model and name. Settings > Hosts refreshes the list by asking the
   Macs it already knows (`refreshHosts`), or adds one by name; only
   onboarding asks for a Mac to type.
   Identity: one Ed25519 key made on the phone (`KeyStore`, Keychain,
