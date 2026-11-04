@@ -1173,6 +1173,18 @@ assert_eq "  ...a removed worktree's is not offered" "$(printf '%s' "$HW" | jq -
 git clone -q "$T/origins/alpha.git" "$T/root/histN"
 for i in $(seq 10 31); do conv "$T/root/histN" "aaaaaaaa-0000-0000-0000-0000000000$i" "2026090100$i" "laptop-histN-n$i" "p$i"; done
 assert_eq "history: at most 20, the newest"        "$(run history --local histN | jq -r 'length, .[0].name, .[19].name' | tr '\n' ' ')" "20 n31 n12 "
+# big transcripts: only the ends are read, the whole file when the tail has no prompt
+git clone -q "$T/origins/alpha.git" "$T/root/histB"
+BK="$T/home/.claude/projects/$(printf '%s' "$T/root/histB" | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$BK"
+bigpad() { awk 'BEGIN { for (i = 0; i < 12000; i++) print "{\"type\":\"assistant\",\"message\":\"padding padding padding padding padding padding padding\"}" }'; }
+{ printf '{"type":"custom-title","customTitle":"laptop-histB-big"}\n{"type":"last-prompt","lastPrompt":"old"}\n'
+  bigpad; printf '{"type":"last-prompt","lastPrompt":"newest"}\n'; } > "$BK/$U1.jsonl"
+{ printf '{"type":"user"}\n'; bigpad; printf '{"type":"last-prompt","lastPrompt":"buried"}\n'; bigpad; } > "$BK/$U2.jsonl"
+HB=$(run history --local histB)
+assert_eq "history of a big transcript: the title from its start, the prompt from its end" \
+  "$(printf '%s' "$HB" | jq -r --arg u "$U1" '.[] | select(.id == $u) | "\(.name)|\(.prompt)"')" "big|newest"
+assert_eq "  ...a prompt far from the end is still found" \
+  "$(printf '%s' "$HB" | jq -r --arg u "$U2" '.[] | select(.id == $u) | .prompt')" "buried"
 # the command
 assert_contains "history table: name, when and id" "$(run history hist)" "review"
 assert_contains "  ...the id to resume with"       "$(run history hist)" "$U2"

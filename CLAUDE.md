@@ -150,7 +150,7 @@ whoever runs it.
   (`claude_dir_key`: non-alphanumerics to `-`) for the clone and each
   existing worktree, newest 20, `[{id, dir, name, title, prompt, ts}]`;
   name from a `<FLEET_SELF>-<session>` custom-title, a worktree's own
-  name in a worktree, else `""`; the last `lastPrompt`; running ones
+  name in a worktree, else `""`; the last `lastPrompt` (`history_meta` reads only a transcript's first 64 KB and last 512 KB, where Claude Code keeps both lines, and the whole file only when that has no prompt: they reach 300 MB); running ones
   (`claude_live_ids`: a `~/.claude/sessions/<pid>.json` with a live pid
   whose `ps lstart` in UTC is its `procStart`, since a power cut leaves
   the files and a restart reuses pids) and stubs left out. Read-only.

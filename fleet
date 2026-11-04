@@ -253,6 +253,22 @@ claude_live_ids() {
   return 0
 }
 HISTORY_MAX=20
+# history_meta <transcript>: its custom-title and last-prompt lines, oldest
+# first. Transcripts reach hundreds of MB and grep reads ~100 MB/s, so only
+# the ends are read: Claude Code re-appends both lines near the end (within
+# 50 KB on real ones), and the -n title is the first line. The whole file
+# only when the tail holds no prompt. Partial lines at the cuts are dropped
+# by the reader's fromjson?.
+history_meta() {
+  local f="$1" out
+  out=$({ head -c 65536 "$f"; printf '\n'; tail -c 524288 "$f"; } 2>/dev/null \
+        | grep -h -e '"custom-title"' -e '"lastPrompt"' || true)
+  case "$out" in
+    *'"lastPrompt"'*) ;;
+    *) out=$(grep -h -e '"custom-title"' -e '"lastPrompt"' "$f" 2>/dev/null || true) ;;
+  esac
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
 # history_local <project> [id]: the project's conversations Claude Code can
 # resume, newest first, at most HISTORY_MAX (with an id: just that one, any
 # age), as [{id, dir, name, title, prompt, ts}]. name is the fleet session
@@ -279,7 +295,7 @@ history_local() {
       case "$live" in *" $id "*) continue ;; esac
       wt=""; [ "$(cd "$d" && pwd -P)" = "$mainp" ] || wt=$(basename "$d")
       # Only rows that came out count towards the cap (a stub prints nothing).
-      if { grep -h -e '"custom-title"' -e '"lastPrompt"' "$f" 2>/dev/null || true; } \
+      if history_meta "$f" \
         | jq -Rnc --arg id "$id" --arg dir "$d" --arg wt "$wt" --arg pre "$pre" --argjson ts "$ts" '
             [inputs | fromjson? // empty | objects] as $l
             | ([$l[] | select(.type == "custom-title") | .customTitle // empty | strings] | last // "") as $t
