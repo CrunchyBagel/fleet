@@ -154,6 +154,13 @@ is_managed() {       # $1 session $2 in_worktree(true|false): registered, and st
   if [ "$2" = false ] && ! tmux has-session -t "$1" 2>/dev/null; then forget_session "$1"; return 1; fi
   return 0
 }
+registered_any() {   # $1 session names, one per line: is any in the registry?
+  local s
+  while IFS= read -r s; do
+    [ -n "$s" ] && [ -e "$FLEET_SESSIONS/$s" ] && return 0
+  done <<< "$1"
+  return 1
+}
 # A registered session whose directory is gone (its worktree was removed,
 # often by the agent itself after merging its branch) would match no row. If
 # it is still alive it now counts as a session in the repo itself, where
@@ -398,9 +405,12 @@ realdir() { (cd "$1" 2>/dev/null && pwd -P); }   # git prints resolved paths
 # status_project <project>: one JSON object per worktree of that project, and
 # for the primary repo one per registered session in it (plain projects can
 # run several named sessions in the same directory), or a single unmanaged
-# "main" row if none.
+# "main" row if none. [--all]: every worktree; without it a worktree none of
+# whose sessions is registered is skipped before any git runs (the client
+# drops unmanaged rows anyway, and a dozen hand-made worktrees of a big repo
+# cost seconds of git status).
 status_project() {
-  local project="$1" main mainreal wtpath branch name session state dirty ts subject
+  local project="$1" mode="${2:-}" main mainreal wtpath branch name session state dirty ts subject
   local ahead behind upstream managed activity in_wt sessions af remote claude_session hookjson stats
   main=$(project_repo "$project") || return 0
   mainreal=$(realdir "$main")
@@ -418,6 +428,7 @@ status_project() {
         in_wt=true
         sessions=$(session_name "$project" "$(basename "$wtpath")")
       fi
+      if [ "$mode" != "--all" ] && ! registered_any "$sessions"; then continue; fi
 
       if [ -n "$(git -C "$wtpath" status --porcelain 2>/dev/null)" ]; then dirty=true; else dirty=false; fi
       ts=$(git -C "$wtpath" log -1 --format=%ct 2>/dev/null || echo 0)
@@ -508,7 +519,7 @@ status_local() {
     if [ "$mode" != "--all" ]; then
       case " $only " in *" $project "*) ;; *) continue ;; esac
     fi
-    status_project "$project" > "$tmp/$project.json" &
+    status_project "$project" "$mode" > "$tmp/$project.json" &
   done
   wait
   { cat "$tmp"/*.json 2>/dev/null || true; } | jq -sc '.'

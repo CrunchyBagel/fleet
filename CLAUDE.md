@@ -277,7 +277,7 @@ whoever runs it.
   `install --local`; the `--local` forms never fan out or open a terminal.
 - Mode strings passed to `host_fetch`/`status_local`/`pick`/`record_for`: `""`
   = fleet's sessions (default), `--all` = everything. Older remotes ignore
-  them and return everything; the client filters on `.managed` anyway.
+  them and return everything; the client filters on `.managed` anyway. Without `--all`, `status_project` skips a worktree none of whose sessions is registered before running any git in it (`registered_any`): hand-made worktrees of a big repo cost ~0.4s of git each, and attach waits on status.
 - `reap` offers a worktree when its branch has nothing beyond origin's default
   branch (`refs/remotes/origin/HEAD`, else `origin/main`). That includes
   unstarted branches, so the prompt says "nothing beyond", dirty worktrees are

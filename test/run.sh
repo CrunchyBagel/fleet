@@ -177,6 +177,10 @@ assert_contains "ls lists registered plain sessions"  "$L" "review"
 assert_contains "ls lists registered worktree session" "$L" "t1"
 assert_lacks    "ls hides unregistered worktrees"      "$L" "feat"
 assert_eq "status --json only visits registered projects" "$(renv "$ALIVE" -- status --json | jq -r '[.[].project] | unique | join(",")')" "plain,plainB"
+git -C "$T/root/plainB" worktree add -q -b loose "$T/loose" 2>/dev/null   # made by hand, not by fleet new
+assert_eq "  ...and skips worktrees no registered session runs in" "$(renv "$ALIVE" -- status --json | jq -r '[.[] | select(.name == "loose")] | length')" "0"
+assert_eq "  ...which --all still lists" "$(renv "$ALIVE" -- status --json --all | jq -r '[.[] | select(.name == "loose")] | length')" "1"
+git -C "$T/root/plainB" worktree remove "$T/loose"; git -C "$T/root/plainB" branch -q -D loose
 L=$(renv "FAKE_TMUX_SESSIONS=plainR-main plainB-t1" -- ls)
 assert_lacks "plain session forgotten when its tmux is gone" "$L" "review"
 assert_false "registry entry removed" test -e "$T/state/sessions/plain-review"
